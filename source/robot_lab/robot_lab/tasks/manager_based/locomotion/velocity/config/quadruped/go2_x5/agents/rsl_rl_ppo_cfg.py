@@ -66,4 +66,4 @@ class Go2X5RobustRoughPPORunnerCfg(Go2X5RoughPPORunnerCfg):
         self.max_iterations = 6000
         self.save_interval = 250
         self.experiment_name = "go2_x5_robust_rough"
-        self.algorithm.entropy_coef = 0.008
+        self.algorithm.entropy_coef = 0.004

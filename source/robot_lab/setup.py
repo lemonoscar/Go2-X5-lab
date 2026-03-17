@@ -19,9 +19,14 @@ INSTALL_REQUIRES = [
     "psutil",
     "colorama",
     "numpy",
-    # rl
-    "cusrl[all]",
 ]
+
+EXTRAS_REQUIRE = {
+    # CusRL is only needed for the optional CusRL train/play entrypoints.
+    # Keeping it out of install_requires avoids upgrading shared Isaac Sim deps
+    # such as wrapt in environments that only use the RSL-RL workflow.
+    "cusrl": ["cusrl[all]"],
+}
 
 # Installation operation
 setup(
@@ -34,6 +39,7 @@ setup(
     description=EXTENSION_TOML_DATA["package"]["description"],
     keywords=EXTENSION_TOML_DATA["package"]["keywords"],
     install_requires=INSTALL_REQUIRES,
+    extras_require=EXTRAS_REQUIRE,
     license="Apache License 2.0",
     include_package_data=True,
     python_requires=">=3.10",

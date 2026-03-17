@@ -94,3 +94,59 @@ def command_levels_ang_vel(
             base_velocity_ranges.ang_vel_z = new_ang_vel_z.tolist()
 
     return torch.tensor(base_velocity_ranges.ang_vel_z[1], device=env.device)
+
+
+def reward_weights_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    p1_weights: dict,
+    p2_weights: dict,
+    curriculum_iterations: int = 2000,
+) -> None:
+    """Gradually transition reward weights from Phase 1 (Foundation Flat) to Phase 2 (Robust Rough) values.
+
+    This curriculum function linearly interpolates reward weights from P1 values to P2 values
+    over a specified number of training iterations. This helps smooth the transition when
+    fine-tuning a model trained on flat terrain to rough terrain.
+
+    Args:
+        env: The learning environment.
+        env_ids: Environment IDs (unused, kept for curriculum interface compatibility).
+        p1_weights: Dictionary of reward weights from Phase 1 (Foundation Flat).
+        p2_weights: Dictionary of target reward weights for Phase 2 (Robust Rough).
+        curriculum_iterations: Number of training iterations to complete the transition.
+    """
+    # Calculate current progress based on iteration count (if available)
+    current_iter = getattr(env, "common_step_counter", 0) // getattr(env, "max_episode_length", 1)
+
+    # Initialize tracking variables on first call
+    if not hasattr(env, "_reward_curriculum_initialized"):
+        env._reward_curriculum_initialized = True
+        env._reward_curriculum_start_iter = current_iter
+        env._reward_curriculum_p1_weights = p1_weights
+        env._reward_curriculum_p2_weights = p2_weights
+        env._reward_curriculum_total_iters = curriculum_iterations
+
+    # Calculate progress (0.0 = P1 weights, 1.0 = P2 weights)
+    progress = min((current_iter - env._reward_curriculum_start_iter) / env._reward_curriculum_total_iters, 1.0)
+
+    # Update reward weights based on current progress
+    for attr_name, p1_weight in p1_weights.items():
+        if attr_name not in p2_weights:
+            continue
+        p2_weight = p2_weights[attr_name]
+
+        # Linear interpolation
+        current_weight = p1_weight + (p2_weight - p1_weight) * progress
+
+        # Update the reward weight
+        if hasattr(env.reward_manager, "_term_names"):
+            term_names = env.reward_manager._term_names
+            if attr_name in term_names:
+                reward_term = env.reward_manager.get_term(attr_name)
+                if hasattr(reward_term, "cfg"):
+                    reward_term.cfg.weight = current_weight
+                elif hasattr(reward_term, "weight"):
+                    reward_term.weight = current_weight
+
+    return progress
