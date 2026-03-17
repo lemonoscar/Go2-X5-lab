@@ -5,6 +5,7 @@ import torch
 
 import isaaclab.terrains as terrain_gen
 from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.terrains import TerrainGeneratorCfg
@@ -17,6 +18,15 @@ from robot_lab.tasks.manager_based.locomotion.velocity.velocity_env_cfg import L
 
 
 HEIGHT_SCAN_DIM = 187
+ARM_LOCKED_DEFAULT_RANGE = [(0.0, 0.0)] * 6
+ARM_ROUGH_WARMUP_RANGE = [
+    (-0.10, 0.10),
+    (-0.12, 0.12),
+    (-0.12, 0.12),
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+]
 
 FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
     curriculum=False,
@@ -60,6 +70,15 @@ class _Go2X5LeggedBaseEnvCfg(LocomotionVelocityRoughEnvCfg):
         "RL_thigh_joint",
         "RL_calf_joint",
     ]
+    arm_joint_names = [
+        "arm_joint1",
+        "arm_joint2",
+        "arm_joint3",
+        "arm_joint4",
+        "arm_joint5",
+        "arm_joint6",
+    ]
+    joint_names = dog_joint_names + arm_joint_names
 
     def __post_init__(self):
         super().__post_init__()
@@ -74,7 +93,17 @@ class _Go2X5LeggedBaseEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.scene.height_scanner.prim_path = "{ENV_REGEX_NS}/Robot/" + self.base_link_name
         self.scene.height_scanner_base.prim_path = "{ENV_REGEX_NS}/Robot/" + self.base_link_name
 
-        self.commands.arm_joint_pos = None
+        # Keep a consistent 18-DoF policy/action interface across all route stages.
+        # Foundation freezes the arm at the default pose by using a zero range.
+        self.commands.arm_joint_pos = mdp.ArmJointPositionCommandCfg(
+            asset_name="robot",
+            joint_names=self.arm_joint_names,
+            resampling_time_range=(6.0, 8.0),
+            position_range=ARM_LOCKED_DEFAULT_RANGE,
+            use_default_offset=True,
+            clip_to_joint_limits=True,
+            preserve_order=True,
+        )
         self.commands.base_velocity.debug_vis = False
         self.commands.base_velocity.heading_command = False
         self.commands.base_velocity.rel_heading_envs = 0.0
@@ -83,18 +112,31 @@ class _Go2X5LeggedBaseEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.observations.policy.base_ang_vel.scale = 0.25
         self.observations.policy.joint_pos.scale = 1.0
         self.observations.policy.joint_vel.scale = 0.05
-        self.observations.policy.joint_pos.params["asset_cfg"].joint_names = self.dog_joint_names
-        self.observations.policy.joint_vel.params["asset_cfg"].joint_names = self.dog_joint_names
-        self.observations.critic.joint_pos.params["asset_cfg"].joint_names = self.dog_joint_names
-        self.observations.critic.joint_vel.params["asset_cfg"].joint_names = self.dog_joint_names
+        self.observations.policy.joint_pos.params["asset_cfg"].joint_names = self.joint_names
+        self.observations.policy.joint_vel.params["asset_cfg"].joint_names = self.joint_names
+        self.observations.critic.joint_pos.params["asset_cfg"].joint_names = self.joint_names
+        self.observations.critic.joint_vel.params["asset_cfg"].joint_names = self.joint_names
+        self.observations.policy.arm_joint_command = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "arm_joint_pos"},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        self.observations.critic.arm_joint_command = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "arm_joint_pos"},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
 
         self.actions.joint_pos.scale = {
             ".*_hip_joint": 0.125,
             ".*_thigh_joint": 0.25,
             ".*_calf_joint": 0.25,
+            "arm_joint.*": 0.10,
         }
         self.actions.joint_pos.clip = {".*": (-100.0, 100.0)}
-        self.actions.joint_pos.joint_names = self.dog_joint_names
+        self.actions.joint_pos.joint_names = self.joint_names
 
         self.events.randomize_reset_base.params = {
             "pose_range": {
@@ -120,7 +162,7 @@ class _Go2X5LeggedBaseEnvCfg(LocomotionVelocityRoughEnvCfg):
         ]
         self.events.randomize_com_positions.params["asset_cfg"].body_names = [self.base_link_name]
         self.events.randomize_apply_external_force_torque.params["asset_cfg"].body_names = [self.base_link_name]
-        self.events.randomize_actuator_gains.params["asset_cfg"].joint_names = self.dog_joint_names
+        self.events.randomize_actuator_gains.params["asset_cfg"].joint_names = self.joint_names
 
         self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
         self.rewards.body_lin_acc_l2.params["asset_cfg"].body_names = [self.base_link_name]
@@ -148,6 +190,54 @@ class _Go2X5LeggedBaseEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_height.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
+
+        base_body_cfg = SceneEntityCfg("robot", body_names=[self.base_link_name])
+        arm_joint_cfg = SceneEntityCfg("robot", joint_names=self.arm_joint_names, preserve_order=True)
+        self.rewards.arm_joint_vel_l2.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.rewards.arm_joint_acc_l2.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.rewards.arm_joint_torques_l2.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.rewards.arm_action_rate_l2.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.rewards.arm_joint_pos_limits.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.rewards.arm_joint_deviation_l2.params["asset_cfg"].joint_names = self.arm_joint_names
+        self.rewards.arm_joint_pos_tracking_l2 = RewTerm(
+            func=mdp.arm_joint_pos_tracking_l2,
+            weight=0.0,
+            params={"command_name": "arm_joint_pos", "asset_cfg": arm_joint_cfg},
+        )
+        self.rewards.arm_motion_tilt_penalty = RewTerm(
+            func=mdp.arm_motion_tilt_penalty,
+            weight=0.0,
+            params={
+                "base_asset_cfg": base_body_cfg,
+                "arm_asset_cfg": arm_joint_cfg,
+                "tilt_clip": 1.0,
+                "vel_clip": 6.0,
+            },
+        )
+        self.rewards.arm_action_in_unstable_base = RewTerm(
+            func=mdp.arm_action_in_unstable_base,
+            weight=0.0,
+            params={
+                "arm_asset_cfg": arm_joint_cfg,
+                "base_asset_cfg": base_body_cfg,
+                "tilt_threshold": 0.18,
+                "lin_vel_z_threshold": 0.4,
+                "ang_vel_threshold": 1.5,
+            },
+        )
+        self.rewards.arm_stable_track_bonus = RewTerm(
+            func=mdp.arm_stable_track_exp,
+            weight=0.0,
+            params={
+                "command_name": "arm_joint_pos",
+                "arm_asset_cfg": arm_joint_cfg,
+                "base_asset_cfg": base_body_cfg,
+                "tracking_std": 0.12,
+                "tilt_std": 0.18,
+                "vel_z_std": 0.2,
+                "command_scale": 0.15,
+            },
+        )
 
         self.terminations.illegal_contact.params["sensor_cfg"].body_names = [f"^(?!.*{self.foot_link_name}).*"]
         self.terminations.bad_orientation = DoneTerm(
@@ -193,6 +283,8 @@ class Go2X5FoundationFlatEnvCfg(_Go2X5LeggedBaseEnvCfg):
         self.commands.base_velocity.ranges.lin_vel_x = (-0.6, 0.6)
         self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
         self.commands.base_velocity.ranges.ang_vel_z = (-0.8, 0.8)
+        self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (8.0, 10.0)
 
         self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.5, 1.25)
         self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.45, 1.1)
@@ -245,6 +337,16 @@ class Go2X5FoundationFlatEnvCfg(_Go2X5LeggedBaseEnvCfg):
         self.rewards.feet_height_body.weight = 0.0
         self.rewards.feet_gait.weight = 0.25
         self.rewards.upward.weight = 1.0
+        self.rewards.arm_joint_pos_tracking_l2.weight = -6.0
+        self.rewards.arm_joint_vel_l2.weight = -0.001
+        self.rewards.arm_joint_acc_l2.weight = -5.0e-7
+        self.rewards.arm_joint_torques_l2.weight = -5.0e-5
+        self.rewards.arm_action_rate_l2.weight = -0.005
+        self.rewards.arm_joint_pos_limits.weight = -1.0
+        self.rewards.arm_joint_deviation_l2.weight = -0.8
+        self.rewards.arm_motion_tilt_penalty.weight = -0.1
+        self.rewards.arm_action_in_unstable_base.weight = -0.02
+        self.rewards.arm_stable_track_bonus.weight = 0.0
 
         self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.7, 1.0)
         self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.7, 1.0)
@@ -254,19 +356,125 @@ class Go2X5FoundationFlatEnvCfg(_Go2X5LeggedBaseEnvCfg):
 
 @configclass
 class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
+    # Reward weight curriculum settings
+    reward_curriculum_iterations: int = 64  # Roughly ~2k PPO updates with the current env-step based schedule
+    reward_curriculum_enable: bool = True  # Enable reward weight curriculum
+
     def __post_init__(self):
         super().__post_init__()
 
-        # Rough terrain is materially heavier than the flat foundation task.
-        # Keep the default env count aligned with the proven P1 training setup.
+        # P2a: pure terrain transfer from flat to rough.
+        # Keep command distribution and arm behavior close to P1 so the dominant
+        # distribution shift comes from terrain, not from task semantics.
         self.scene.num_envs = 2048
-        self.scene.terrain.max_init_terrain_level = 3
+        self.scene.terrain.max_init_terrain_level = 1
 
-        self.commands.base_velocity.rel_standing_envs = 0.3
-        self.commands.base_velocity.resampling_time_range = (5.0, 7.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
-        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.rel_standing_envs = 0.15
+        self.commands.base_velocity.resampling_time_range = (4.0, 6.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.6, 0.6)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.8, 0.8)
+        self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (8.0, 10.0)
+
+        # Base-height reward already uses terrain-relative sensing on rough terrain.
+        # Disable world-frame root-height terminations during rough adaptation so
+        # local terrain elevation changes do not create artificial failures.
+        self.terminations.root_height_below_minimum = None
+        self.terminations.root_height_above_maximum = None
+
+        # Explicitly disable terrain levels curriculum for P2 (we use fixed level 1)
+        self.curriculum.terrain_levels = None
+
+        # Store Phase 1 (Foundation Flat) reward weights for curriculum transition
+        # These will be used as starting weights, gradually transitioning to Phase 2 targets
+        self._p1_reward_weights = {
+            "lin_vel_z_l2": -1.5,
+            "ang_vel_xy_l2": -0.08,
+            "flat_orientation_l2": -0.5,
+            "base_height_l2": -0.2,
+            "body_lin_acc_l2": -0.01,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -2.0,
+            "joint_power": -1.0e-5,
+            "stand_still": -2.0,
+            "joint_pos_penalty": -0.8,
+            "action_rate_l2": -0.01,
+            "undesired_contacts": -1.0,
+            "contact_forces": -1.0e-4,
+            "track_lin_vel_xy_exp": 4.0,
+            "track_ang_vel_z_exp": 1.8,
+            "feet_air_time": 0.15,
+            "feet_air_time_variance": -0.5,
+            "feet_contact_without_cmd": 0.15,
+            "feet_slide": -0.08,
+            "feet_gait": 0.25,
+            "arm_joint_pos_tracking_l2": -6.0,
+            "arm_joint_vel_l2": -0.001,
+            "arm_joint_acc_l2": -5.0e-7,
+            "arm_joint_torques_l2": -5.0e-5,
+            "arm_action_rate_l2": -0.005,
+            "arm_joint_pos_limits": -1.0,
+            "arm_joint_deviation_l2": -0.8,
+            "arm_motion_tilt_penalty": -0.1,
+            "arm_action_in_unstable_base": -0.02,
+            "arm_stable_track_bonus": 1.0e-6,
+        }
+
+        # Store Phase 2 (Robust Rough) target reward weights
+        self._p2_reward_weights = {
+            "lin_vel_z_l2": -1.6,
+            "ang_vel_xy_l2": -0.10,
+            "flat_orientation_l2": -0.55,
+            "base_height_l2": -0.24,
+            "body_lin_acc_l2": -0.012,
+            "joint_torques_l2": -1.6e-5,
+            "joint_acc_l2": -1.1e-7,
+            "joint_pos_limits": -2.2,
+            "joint_power": -1.1e-5,
+            "stand_still": -2.0,
+            "joint_pos_penalty": -0.82,
+            "action_rate_l2": -0.01,
+            "undesired_contacts": -1.1,
+            "contact_forces": -1.2e-4,
+            "track_lin_vel_xy_exp": 4.0,
+            "track_ang_vel_z_exp": 1.8,
+            "feet_air_time": 0.13,
+            "feet_air_time_variance": -0.6,
+            "feet_contact_without_cmd": 0.15,
+            "feet_slide": -0.12,
+            "feet_gait": 0.30,
+            "arm_joint_pos_tracking_l2": -6.0,
+            "arm_joint_vel_l2": -0.001,
+            "arm_joint_acc_l2": -5.0e-7,
+            "arm_joint_torques_l2": -5.0e-5,
+            "arm_action_rate_l2": -0.005,
+            "arm_joint_pos_limits": -1.0,
+            "arm_joint_deviation_l2": -0.8,
+            "arm_motion_tilt_penalty": -0.1,
+            "arm_action_in_unstable_base": -0.02,
+            "arm_stable_track_bonus": 1.0e-6,
+        }
+
+        # Add reward weight curriculum term after the phase dictionaries exist.
+        if self.reward_curriculum_enable:
+            from isaaclab.managers import CurriculumTermCfg as CurrTerm
+
+            self.curriculum.reward_weights = CurrTerm(
+                func=mdp.reward_weights_curriculum,
+                params={
+                    "p1_weights": self._p1_reward_weights,
+                    "p2_weights": self._p2_reward_weights,
+                    "curriculum_iterations": self.reward_curriculum_iterations,
+                },
+            )
+
+        # Initialize with Phase 1 weights (will be updated by curriculum during training)
+        if self.reward_curriculum_enable:
+            for attr_name, p1_weight in self._p1_reward_weights.items():
+                if hasattr(self.rewards, attr_name):
+                    getattr(self.rewards, attr_name).weight = p1_weight
 
         self.events.randomize_reset_base.params = {
             "pose_range": {
@@ -286,72 +494,99 @@ class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
                 "yaw": (-0.5, 0.5),
             },
         }
-        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.2, 1.5)
-        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.2, 1.3)
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.5, 1.25)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.45, 1.1)
         self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.2)
-        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.8, 1.2)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.9, 1.1)
         self.events.randomize_rigid_body_mass_base.params["operation"] = "scale"
-        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.85, 1.15)
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.95, 1.05)
         self.events.randomize_com_positions.params["com_range"] = {
-            "x": (-0.03, 0.03),
+            "x": (-0.02, 0.02),
             "y": (-0.02, 0.02),
             "z": (-0.02, 0.02),
         }
-        self.events.randomize_actuator_gains.mode = "interval"
-        self.events.randomize_actuator_gains.interval_range_s = (1.0, 3.0)
-        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.8, 1.2)
-        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.8, 1.2)
-        self.events.randomize_apply_external_force_torque.mode = "interval"
-        self.events.randomize_apply_external_force_torque.interval_range_s = (8.0, 15.0)
-        self.events.randomize_apply_external_force_torque.params["force_range"] = (-10.0, 10.0)
-        self.events.randomize_apply_external_force_torque.params["torque_range"] = (-3.0, 3.0)
-        self.events.randomize_push_robot.interval_range_s = (8.0, 14.0)
-        self.events.randomize_push_robot.params["velocity_range"] = {"x": (-0.3, 0.3), "y": (-0.3, 0.3)}
+        self.events.randomize_actuator_gains.mode = "reset"
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.9, 1.1)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.9, 1.1)
+        self.events.randomize_apply_external_force_torque = None
+        self.events.randomize_push_robot = None
 
         self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.03, n_max=0.03)
         self.observations.policy.projected_gravity.noise = Unoise(n_min=-0.02, n_max=0.02)
 
-        self.rewards.is_terminated.weight = 0.0
-        self.rewards.lin_vel_z_l2.weight = -1.8
-        self.rewards.ang_vel_xy_l2.weight = -0.12
-        self.rewards.flat_orientation_l2.weight = -0.7
-        self.rewards.base_height_l2.weight = -0.30
-        self.rewards.base_height_l2.params["target_height"] = 0.33
-        self.rewards.body_lin_acc_l2.weight = -0.015
-        self.rewards.joint_torques_l2.weight = -1.8e-5
-        self.rewards.joint_vel_l2.weight = 0.0
-        self.rewards.joint_acc_l2.weight = -1.5e-7
-        self.rewards.joint_pos_limits.weight = -3.0
-        self.rewards.joint_vel_limits.weight = 0.0
-        self.rewards.joint_power.weight = -1.5e-5
-        self.rewards.stand_still.weight = -2.5
-        self.rewards.joint_pos_penalty.weight = -0.9
-        self.rewards.joint_mirror.weight = 0.0
-        self.rewards.action_rate_l2.weight = -0.015
-        self.rewards.undesired_contacts.weight = -1.2
-        self.rewards.contact_forces.weight = -1.5e-4
-        self.rewards.track_lin_vel_xy_exp.weight = 4.2
-        self.rewards.track_ang_vel_z_exp.weight = 1.9
-        self.rewards.feet_air_time.weight = 0.08
-        self.rewards.feet_air_time.params["threshold"] = 0.5
-        self.rewards.feet_air_time_variance.weight = -0.8
-        self.rewards.feet_contact.weight = 0.0
-        self.rewards.feet_contact_without_cmd.weight = 0.12
-        self.rewards.feet_stumble.weight = 0.0
-        self.rewards.feet_slide.weight = -0.18
-        self.rewards.feet_height.weight = 0.0
-        self.rewards.feet_height_body.weight = 0.0
-        self.rewards.feet_height_body.params["target_height"] = -0.2
-        self.rewards.feet_gait.weight = 0.35
-        self.rewards.upward.weight = 1.0
+        # Set reward weights based on curriculum setting
+        # If curriculum is enabled, weights were already initialized to P1 values above
+        # and will be gradually adjusted during training. Otherwise, use P2 values directly.
+        if not self.reward_curriculum_enable:
+            self.rewards.is_terminated.weight = 0.0
+            self.rewards.lin_vel_z_l2.weight = -1.6
+            self.rewards.ang_vel_xy_l2.weight = -0.10
+            self.rewards.flat_orientation_l2.weight = -0.55
+            self.rewards.base_height_l2.weight = -0.24
+            self.rewards.base_height_l2.params["target_height"] = 0.33
+            self.rewards.body_lin_acc_l2.weight = -0.012
+            self.rewards.joint_torques_l2.weight = -1.6e-5
+            self.rewards.joint_vel_l2.weight = 0.0
+            self.rewards.joint_acc_l2.weight = -1.1e-7
+            self.rewards.joint_pos_limits.weight = -2.2
+            self.rewards.joint_vel_limits.weight = 0.0
+            self.rewards.joint_power.weight = -1.1e-5
+            self.rewards.stand_still.weight = -2.0
+            self.rewards.joint_pos_penalty.weight = -0.82
+            self.rewards.joint_mirror.weight = 0.0
+            self.rewards.action_rate_l2.weight = -0.01
+            self.rewards.undesired_contacts.weight = -1.1
+            self.rewards.contact_forces.weight = -1.2e-4
+            self.rewards.track_lin_vel_xy_exp.weight = 4.0
+            self.rewards.track_ang_vel_z_exp.weight = 1.8
+            self.rewards.feet_air_time.weight = 0.13
+            self.rewards.feet_air_time.params["threshold"] = 0.45
+            self.rewards.feet_air_time_variance.weight = -0.6
+            self.rewards.feet_contact.weight = 0.0
+            self.rewards.feet_contact_without_cmd.weight = 0.15
+            self.rewards.feet_stumble.weight = 0.0
+            self.rewards.feet_slide.weight = -0.12
+            self.rewards.feet_height.weight = 0.0
+            self.rewards.feet_height_body.weight = 0.0
+            self.rewards.feet_height_body.params["target_height"] = -0.2
+            self.rewards.feet_gait.weight = 0.30
+            self.rewards.upward.weight = 1.0
+            self.rewards.arm_joint_pos_tracking_l2.weight = -6.0
+            self.rewards.arm_joint_vel_l2.weight = -0.001
+            self.rewards.arm_joint_acc_l2.weight = -5.0e-7
+            self.rewards.arm_joint_torques_l2.weight = -5.0e-5
+            self.rewards.arm_action_rate_l2.weight = -0.005
+            self.rewards.arm_joint_pos_limits.weight = -1.0
+            self.rewards.arm_joint_deviation_l2.weight = -0.8
+            self.rewards.arm_motion_tilt_penalty.weight = -0.1
+            self.rewards.arm_action_in_unstable_base.weight = -0.02
+            self.rewards.arm_stable_track_bonus.weight = 1.0e-6
+        else:
+            # For curriculum mode, set non-curriculum rewards to their final values
+            self.rewards.is_terminated.weight = 0.0
+            self.rewards.joint_vel_l2.weight = 0.0
+            self.rewards.joint_mirror.weight = 0.0
+            self.rewards.feet_contact.weight = 0.0
+            self.rewards.feet_stumble.weight = 0.0
+            self.rewards.feet_height.weight = 0.0
+            self.rewards.feet_height_body.weight = 0.0
+            self.rewards.feet_height_body.params["target_height"] = -0.2
+            self.rewards.upward.weight = 1.0
+            self.rewards.base_height_l2.params["target_height"] = 0.33
+            self.rewards.feet_air_time.params["threshold"] = 0.45
+
+        self.rewards.arm_stable_track_bonus.params["tracking_std"] = 0.18
+        self.rewards.arm_stable_track_bonus.params["tilt_std"] = 0.22
+        self.rewards.arm_stable_track_bonus.params["vel_z_std"] = 0.3
+        self.rewards.arm_stable_track_bonus.params["command_scale"] = 0.08
 
         self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.2, 1.0)
         self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.2, 1.0)
 
-        self.sim2sim_action_delay_range = (0, 2)
-        self.sim2sim_action_hold_prob = 0.05
-        self.sim2sim_action_noise_std = 0.01
-        self.sim2sim_obs_delay_steps = 1
+        self.sim2sim_action_delay_range = (0, 0)
+        self.sim2sim_action_hold_prob = 0.0
+        self.sim2sim_action_noise_std = 0.0
+        self.sim2sim_obs_delay_steps = 0
         delay_steps = int(self.sim2sim_obs_delay_steps)
         if delay_steps > 0:
             delayed_terms = [
@@ -362,6 +597,7 @@ class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
                 ("joint_vel", mdp.delayed_joint_vel_rel),
                 ("actions", mdp.delayed_last_action),
                 ("velocity_commands", mdp.delayed_generated_commands),
+                ("arm_joint_command", mdp.delayed_generated_commands),
             ]
             for term_name, func in delayed_terms:
                 term = getattr(self.observations.policy, term_name, None)
@@ -373,6 +609,8 @@ class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
                 term.params["delay_steps"] = delay_steps
             if self.observations.policy.velocity_commands is not None:
                 self.observations.policy.velocity_commands.params["command_name"] = "base_velocity"
+            if self.observations.policy.arm_joint_command is not None:
+                self.observations.policy.arm_joint_command.params["command_name"] = "arm_joint_pos"
 
         self.terminations.illegal_contact = None
         self.terminations.terrain_out_of_bounds = None

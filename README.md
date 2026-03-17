@@ -57,7 +57,7 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
 ```bash
 python scripts/reinforcement_learning/rsl_rl/play.py \
   --task=RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0 \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8999.pt \
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt \
   --num_envs=1
 ```
 
@@ -77,8 +77,8 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 | Go2 | `RobotLab-Isaac-Velocity-Rough-Unitree-Go2-v0` | 粗糙地形速度跟踪 |
 | Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-v0` | 平地 locomotion + arm 形态配置 |
 | Go2-X5 | `RobotLab-Isaac-Velocity-Rough-Go2-X5-v0` | 粗糙地形 locomotion + arm 形态配置 |
-| Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0` | foundation flat 路线 |
-| Go2-X5 | `RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0` | robust rough 路线 |
+| Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0` | foundation flat 路线，保留 arm 维度但固定默认位姿 |
+| Go2-X5 | `RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0` | P2a rough transfer 路线，保留 arm 维度但继续锁在默认位姿 |
 
 相关环境注册入口位于：
 
@@ -95,6 +95,7 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 - `scripts/reinforcement_learning/cusrl/train.py`
 - `scripts/reinforcement_learning/cusrl/play.py`
 - `scripts/tools/list_envs.py`
+- `scripts/tools/migrate_go2_x5_route_checkpoint.py`
 - `scripts/tools/convert_urdf.py`
 - `scripts/tools/convert_mjcf.py`
 - `scripts/tools/clean_trash.py`
@@ -105,6 +106,7 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 - `rsl_rl/play.py`：标准 checkpoint 回放入口
 - `rsl_rl/play_cs.py`：加载指定 USD 地图的定制回放入口
 - `cusrl/train.py` / `cusrl/play.py`：CusRL 工作流入口
+- `migrate_go2_x5_route_checkpoint.py`：把旧的 12-action route checkpoint 迁移到新的 arm-aware route 架构
 - `convert_urdf.py` / `convert_mjcf.py`：机器人描述文件转换为 USD
 
 ## 训练与回放示例
@@ -127,14 +129,48 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --headless
 ```
 
-Go2-X5 robust rough 从 foundation checkpoint 热启动：
+说明：
+
+- 这个阶段的 policy 仍然包含 arm 相关观测和动作维度。
+- 但 `arm_joint_pos` 命令被固定在默认位姿，目的是先学稳底盘，不丢掉后续开 arm 的网络形状。
+
+Go2-X5 P2a rough transfer 从 foundation checkpoint 热启动：
 
 ```bash
 python scripts/reinforcement_learning/rsl_rl/train.py \
   --task=RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0 \
   --headless \
   --resume \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8999.pt
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt
+```
+
+说明：
+
+- 这个阶段是纯 `flat -> rough` 迁移：rough terrain 打开，但 arm 仍然锁在默认位姿。
+- policy 维度保持不变，因此后续如果要做 `P2b` 再开 arm，不需要再改网络结构。
+
+如果你手里已经有旧架构的 `model_8000.pt`（旧 route 是 `235 -> 12`），先迁移再 resume：
+
+```bash
+python scripts/tools/migrate_go2_x5_route_checkpoint.py \
+  --input logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt
+```
+
+默认会输出：
+
+```bash
+logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000_armdims.pt
+```
+
+然后用迁移后的 checkpoint 接着训练，并显式跳过旧 optimizer 状态：
+
+```bash
+python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task=RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0 \
+  --headless \
+  --resume \
+  --no_load_optimizer \
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000_armdims.pt
 ```
 
 ### RSL-RL 回放
@@ -152,7 +188,7 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 ```bash
 python scripts/reinforcement_learning/rsl_rl/play.py \
   --task=RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0 \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8999.pt \
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt \
   --num_envs=1
 ```
 
@@ -161,7 +197,7 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 ```bash
 python scripts/reinforcement_learning/rsl_rl/play.py \
   --task=RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0 \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8999.pt \
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt \
   --num_envs=1 \
   --keyboard
 ```
