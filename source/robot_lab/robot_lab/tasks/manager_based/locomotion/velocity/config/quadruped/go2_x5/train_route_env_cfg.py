@@ -28,28 +28,20 @@ ARM_ROUGH_WARMUP_RANGE = [
     (-0.08, 0.08),
 ]
 ARM_FLAT_UNLOCK_START_RANGE = [
+    (-0.25, 0.25),
+    (0.00, 0.45),
+    (0.00, 0.45),
+    (-0.25, 0.25),
     (-0.20, 0.20),
-    (0.00, 0.35),
-    (0.00, 0.35),
     (-0.20, 0.20),
-    (-0.18, 0.18),
-    (-0.18, 0.18),
 ]
-ARM_FLAT_UNLOCK_STAGE2_RANGE = [
-    (-1.20, 1.20),
-    (0.00, 1.20),
-    (0.00, 1.20),
-    (-0.80, 0.80),
-    (-0.70, 0.70),
-    (-0.70, 0.70),
-]
-ARM_FLAT_UNLOCK_STAGE3_RANGE = [
-    (-1.35, 1.35),
-    (0.00, 1.35),
-    (0.00, 1.35),
-    (-0.95, 0.95),
-    (-0.85, 0.85),
-    (-0.85, 0.85),
+ARM_FLAT_UNLOCK_FINAL_RANGE = [
+    (-2.40, 3.00),
+    (0.00, 3.00),
+    (0.00, 3.00),
+    (-1.45, 1.45),
+    (-1.45, 1.45),
+    (-1.45, 1.45),
 ]
 
 FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
@@ -398,12 +390,12 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             ".*_hip_joint": 0.125,
             ".*_thigh_joint": 0.25,
             ".*_calf_joint": 0.25,
-            "arm_joint1": 0.80,
-            "arm_joint2": 1.00,
-            "arm_joint3": 1.00,
-            "arm_joint4": 0.60,
-            "arm_joint5": 0.50,
-            "arm_joint6": 0.50,
+            "arm_joint1": 1.20,
+            "arm_joint2": 1.20,
+            "arm_joint3": 1.20,
+            "arm_joint4": 0.80,
+            "arm_joint5": 0.70,
+            "arm_joint6": 0.70,
         }
 
         self.commands.base_velocity.rel_standing_envs = 1.0
@@ -507,22 +499,18 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
                     reward_term.weight = p4_weight
 
         if self.arm_command_curriculum_enable:
-            arm_stage_2_iteration = max(int(self.arm_command_curriculum_iterations * 0.375), 1)
             self.curriculum.arm_command_range = CurrTerm(
-                func=mdp.arm_joint_position_range_staged_curriculum,
+                func=mdp.arm_joint_position_range_curriculum,
                 params={
                     "command_name": "arm_joint_pos",
-                    "position_ranges": [
-                        ARM_FLAT_UNLOCK_START_RANGE,
-                        ARM_FLAT_UNLOCK_STAGE2_RANGE,
-                        ARM_FLAT_UNLOCK_STAGE3_RANGE,
-                    ],
-                    "stage_iterations": [0, arm_stage_2_iteration, self.arm_command_curriculum_iterations],
+                    "initial_position_range": ARM_FLAT_UNLOCK_START_RANGE,
+                    "final_position_range": ARM_FLAT_UNLOCK_FINAL_RANGE,
+                    "curriculum_iterations": self.arm_command_curriculum_iterations,
                 },
             )
         else:
             self.curriculum.arm_command_range = None
-            self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_STAGE3_RANGE
+            self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_FINAL_RANGE
 
         for reward_name in (
             "is_terminated",
