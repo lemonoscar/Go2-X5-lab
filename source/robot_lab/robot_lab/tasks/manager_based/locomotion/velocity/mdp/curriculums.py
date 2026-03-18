@@ -96,6 +96,59 @@ def command_levels_ang_vel(
     return torch.tensor(base_velocity_ranges.ang_vel_z[1], device=env.device)
 
 
+def arm_joint_position_range_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    command_name: str,
+    initial_position_range: Sequence[Sequence[float]],
+    final_position_range: Sequence[Sequence[float]],
+    curriculum_iterations: int = 2000,
+) -> None:
+    """Linearly expand arm joint command ranges over training.
+
+    This is used for arm-unlock stages that resume from a checkpoint trained with the arm fixed at
+    its default pose. The network interface stays unchanged while the arm command distribution is
+    widened gradually.
+    """
+
+    del env_ids
+
+    if len(initial_position_range) != len(final_position_range):
+        raise ValueError("initial_position_range and final_position_range must have the same length.")
+
+    current_iter = getattr(env, "common_step_counter", 0) // getattr(env, "max_episode_length", 1)
+    state = getattr(env, "_arm_joint_range_curriculum_state", None)
+    if state is None:
+        state = {}
+        env._arm_joint_range_curriculum_state = state
+
+    if command_name not in state:
+        state[command_name] = {
+            "start_iter": current_iter,
+            "initial_position_range": [tuple(bounds) for bounds in initial_position_range],
+            "final_position_range": [tuple(bounds) for bounds in final_position_range],
+            "total_iters": curriculum_iterations,
+        }
+
+    cfg = env.command_manager.get_term(command_name).cfg
+    command_state = state[command_name]
+    progress = min(
+        (current_iter - command_state["start_iter"]) / max(command_state["total_iters"], 1),
+        1.0,
+    )
+
+    current_position_range = []
+    for init_bounds, final_bounds in zip(
+        command_state["initial_position_range"], command_state["final_position_range"], strict=True
+    ):
+        lower = init_bounds[0] + (final_bounds[0] - init_bounds[0]) * progress
+        upper = init_bounds[1] + (final_bounds[1] - init_bounds[1]) * progress
+        current_position_range.append((float(lower), float(upper)))
+
+    cfg.position_range = current_position_range
+    return progress
+
+
 def reward_weights_curriculum(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],

@@ -47,10 +47,10 @@ GO2_X5_CFG = ArticulationCfg(
             "F.*_thigh_joint": 0.8,
             "R.*_thigh_joint": 0.8,
             ".*_calf_joint": -1.5,
-            # 机械臂关节（折叠姿态）
+            # 机械臂关节（全零默认姿态）
             "arm_joint1": 0.0,
-            "arm_joint2": 1.57,
-            "arm_joint3": 1.57,
+            "arm_joint2": 0.0,
+            "arm_joint3": 0.0,
             "arm_joint4": 0.0,
             "arm_joint5": 0.0,
             "arm_joint6": 0.0,
@@ -81,4 +81,3 @@ GO2_X5_CFG = ArticulationCfg(
 )
 """Configuration of Unitree Go2 using DC motor.
 """
-

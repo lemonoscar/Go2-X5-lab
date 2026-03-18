@@ -27,6 +27,22 @@ ARM_ROUGH_WARMUP_RANGE = [
     (-0.08, 0.08),
     (-0.08, 0.08),
 ]
+ARM_FLAT_UNLOCK_START_RANGE = [
+    (-0.08, 0.08),
+    (-0.14, 0.14),
+    (-0.14, 0.14),
+    (-0.10, 0.10),
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+]
+ARM_FLAT_UNLOCK_FINAL_RANGE = [
+    (-0.60, 0.60),
+    (-0.90, 0.90),
+    (-0.90, 0.90),
+    (-0.50, 0.50),
+    (-0.40, 0.40),
+    (-0.40, 0.40),
+]
 
 FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
     curriculum=False,
@@ -350,6 +366,221 @@ class Go2X5FoundationFlatEnvCfg(_Go2X5LeggedBaseEnvCfg):
 
         self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.7, 1.0)
         self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.7, 1.0)
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
+    reward_curriculum_iterations: int = 128
+    arm_command_curriculum_iterations: int = 128
+    reward_curriculum_enable: bool = True
+    arm_command_curriculum_enable: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        from isaaclab.managers import CurriculumTermCfg as CurrTerm
+
+        # P4: resume from the flat foundation checkpoint and unlock arm motion
+        # without changing the route-stage policy interface.
+        self.scene.num_envs = 2048
+
+        self.actions.joint_pos.scale = {
+            ".*_hip_joint": 0.125,
+            ".*_thigh_joint": 0.25,
+            ".*_calf_joint": 0.25,
+            "arm_joint1": 0.45,
+            "arm_joint2": 0.60,
+            "arm_joint3": 0.60,
+            "arm_joint4": 0.35,
+            "arm_joint5": 0.25,
+            "arm_joint6": 0.25,
+        }
+
+        self.commands.base_velocity.rel_standing_envs = 0.50
+        self.commands.base_velocity.resampling_time_range = (6.0, 8.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.25, 0.25)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.15, 0.15)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.25, 0.25)
+        self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_START_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (4.0, 6.0)
+
+        # Keep the base command distribution fixed during arm unlock.
+        self.curriculum.command_levels_lin_vel = None
+        self.curriculum.command_levels_ang_vel = None
+
+        self._p1_reward_weights = {
+            "lin_vel_z_l2": -1.5,
+            "ang_vel_xy_l2": -0.08,
+            "flat_orientation_l2": -0.5,
+            "base_height_l2": -0.2,
+            "body_lin_acc_l2": -0.01,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -2.0,
+            "joint_power": -1.0e-5,
+            "stand_still": -2.0,
+            "joint_pos_penalty": -0.8,
+            "action_rate_l2": -0.01,
+            "undesired_contacts": -1.0,
+            "contact_forces": -1.0e-4,
+            "track_lin_vel_xy_exp": 4.0,
+            "track_ang_vel_z_exp": 1.8,
+            "feet_air_time": 0.15,
+            "feet_air_time_variance": -0.5,
+            "feet_contact_without_cmd": 0.15,
+            "feet_slide": -0.08,
+            "feet_gait": 0.25,
+            "arm_joint_pos_tracking_l2": -6.0,
+            "arm_joint_vel_l2": -0.001,
+            "arm_joint_acc_l2": -5.0e-7,
+            "arm_joint_torques_l2": -5.0e-5,
+            "arm_action_rate_l2": -0.005,
+            "arm_joint_pos_limits": -1.0,
+            "arm_joint_deviation_l2": -0.8,
+            "arm_motion_tilt_penalty": -0.1,
+            "arm_action_in_unstable_base": -0.02,
+            "arm_stable_track_bonus": 1.0e-6,
+        }
+        self._p4_reward_weights = {
+            "lin_vel_z_l2": -1.5,
+            "ang_vel_xy_l2": -0.06,
+            "flat_orientation_l2": -0.35,
+            "base_height_l2": -0.2,
+            "body_lin_acc_l2": -0.01,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -2.0,
+            "joint_power": -1.0e-5,
+            "stand_still": -1.4,
+            "joint_pos_penalty": -0.6,
+            "action_rate_l2": -0.01,
+            "undesired_contacts": -1.0,
+            "contact_forces": -1.0e-4,
+            "track_lin_vel_xy_exp": 3.5,
+            "track_ang_vel_z_exp": 1.5,
+            "feet_air_time": 0.08,
+            "feet_air_time_variance": -0.4,
+            "feet_contact_without_cmd": 0.2,
+            "feet_slide": -0.08,
+            "feet_gait": 0.20,
+            "arm_joint_pos_tracking_l2": -3.0,
+            "arm_joint_vel_l2": -0.001,
+            "arm_joint_acc_l2": -7.5e-7,
+            "arm_joint_torques_l2": -6.0e-5,
+            "arm_action_rate_l2": -0.008,
+            "arm_joint_pos_limits": -1.5,
+            "arm_joint_deviation_l2": -0.05,
+            "arm_motion_tilt_penalty": -0.2,
+            "arm_action_in_unstable_base": -0.05,
+            # Keep this effectively disabled until the gating logic uses delta-from-default.
+            "arm_stable_track_bonus": 1.0e-6,
+        }
+
+        if self.reward_curriculum_enable:
+            self.curriculum.reward_weights = CurrTerm(
+                func=mdp.reward_weights_curriculum,
+                params={
+                    "p1_weights": self._p1_reward_weights,
+                    "p2_weights": self._p4_reward_weights,
+                    "curriculum_iterations": self.reward_curriculum_iterations,
+                },
+            )
+            for attr_name, p1_weight in self._p1_reward_weights.items():
+                reward_term = getattr(self.rewards, attr_name, None)
+                if reward_term is not None:
+                    reward_term.weight = p1_weight
+        else:
+            self.curriculum.reward_weights = None
+            for attr_name, p4_weight in self._p4_reward_weights.items():
+                reward_term = getattr(self.rewards, attr_name, None)
+                if reward_term is not None:
+                    reward_term.weight = p4_weight
+
+        if self.arm_command_curriculum_enable:
+            self.curriculum.arm_command_range = CurrTerm(
+                func=mdp.arm_joint_position_range_curriculum,
+                params={
+                    "command_name": "arm_joint_pos",
+                    "initial_position_range": ARM_FLAT_UNLOCK_START_RANGE,
+                    "final_position_range": ARM_FLAT_UNLOCK_FINAL_RANGE,
+                    "curriculum_iterations": self.arm_command_curriculum_iterations,
+                },
+            )
+        else:
+            self.curriculum.arm_command_range = None
+            self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_FINAL_RANGE
+
+        self.rewards.is_terminated.weight = 0.0
+        self.rewards.joint_vel_l2.weight = 0.0
+        self.rewards.joint_vel_limits.weight = 0.0
+        self.rewards.joint_mirror.weight = 0.0
+        self.rewards.feet_contact.weight = 0.0
+        self.rewards.feet_stumble.weight = 0.0
+        self.rewards.feet_height.weight = 0.0
+        self.rewards.feet_height_body.weight = 0.0
+        self.rewards.base_height_l2.params["target_height"] = 0.33
+        self.rewards.feet_air_time.params["threshold"] = 0.45
+        self.rewards.upward.weight = 1.0
+        self.rewards.arm_stable_track_bonus.params["tracking_std"] = 0.20
+        self.rewards.arm_stable_track_bonus.params["tilt_std"] = 0.22
+        self.rewards.arm_stable_track_bonus.params["vel_z_std"] = 0.25
+        self.rewards.arm_stable_track_bonus.params["command_scale"] = 0.12
+
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.4, 1.25)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.35, 1.10)
+        self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.25)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.9, 1.1)
+        self.events.randomize_rigid_body_mass_base.params["operation"] = "scale"
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.95, 1.08)
+        self.events.randomize_com_positions.params["com_range"] = {
+            "x": (-0.02, 0.02),
+            "y": (-0.02, 0.02),
+            "z": (-0.02, 0.02),
+        }
+        self.events.randomize_actuator_gains.mode = "interval"
+        self.events.randomize_actuator_gains.interval_range_s = (2.0, 4.0)
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.85, 1.15)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.85, 1.15)
+        self.events.randomize_apply_external_force_torque.mode = "interval"
+        self.events.randomize_apply_external_force_torque.interval_range_s = (10.0, 16.0)
+        self.events.randomize_apply_external_force_torque.params["force_range"] = (-6.0, 6.0)
+        self.events.randomize_apply_external_force_torque.params["torque_range"] = (-2.0, 2.0)
+        self.events.randomize_push_robot.interval_range_s = (12.0, 18.0)
+        self.events.randomize_push_robot.params["velocity_range"] = {"x": (-0.15, 0.15), "y": (-0.15, 0.15)}
+
+        self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.02, n_max=0.02)
+        self.observations.policy.projected_gravity.noise = Unoise(n_min=-0.03, n_max=0.03)
+
+        self.sim2sim_action_delay_range = (0, 1)
+        self.sim2sim_action_hold_prob = 0.05
+        self.sim2sim_action_noise_std = 0.005
+        self.sim2sim_obs_delay_steps = 1
+        delay_steps = int(self.sim2sim_obs_delay_steps)
+        if delay_steps > 0:
+            delayed_terms = [
+                ("base_lin_vel", mdp.delayed_base_lin_vel),
+                ("base_ang_vel", mdp.delayed_base_ang_vel),
+                ("projected_gravity", mdp.delayed_projected_gravity),
+                ("joint_pos", mdp.delayed_joint_pos_rel),
+                ("joint_vel", mdp.delayed_joint_vel_rel),
+                ("actions", mdp.delayed_last_action),
+                ("velocity_commands", mdp.delayed_generated_commands),
+                ("arm_joint_command", mdp.delayed_generated_commands),
+            ]
+            for term_name, func in delayed_terms:
+                term = getattr(self.observations.policy, term_name, None)
+                if term is None:
+                    continue
+                term.func = func
+                if term.params is None:
+                    term.params = {}
+                term.params["delay_steps"] = delay_steps
+            if self.observations.policy.velocity_commands is not None:
+                self.observations.policy.velocity_commands.params["command_name"] = "base_velocity"
+            if self.observations.policy.arm_joint_command is not None:
+                self.observations.policy.arm_joint_command.params["command_name"] = "arm_joint_pos"
 
         self.disable_zero_weight_rewards()
 

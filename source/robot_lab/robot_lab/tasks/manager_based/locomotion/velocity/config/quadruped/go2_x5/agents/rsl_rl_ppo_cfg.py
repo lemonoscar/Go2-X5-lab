@@ -58,6 +58,19 @@ class Go2X5FoundationFlatPPORunnerCfg(Go2X5RoughPPORunnerCfg):
 
 
 @configclass
+class Go2X5ArmUnlockFlatPPORunnerCfg(Go2X5RoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 5000
+        self.save_interval = 250
+        self.experiment_name = "go2_x5_arm_unlock_flat"
+        self.algorithm.entropy_coef = 0.003
+        self.algorithm.learning_rate = 5.0e-4
+
+
+@configclass
 class Go2X5RobustRoughPPORunnerCfg(Go2X5RoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
