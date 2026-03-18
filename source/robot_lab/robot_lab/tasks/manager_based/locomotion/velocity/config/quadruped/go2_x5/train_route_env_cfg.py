@@ -28,20 +28,20 @@ ARM_ROUGH_WARMUP_RANGE = [
     (-0.08, 0.08),
 ]
 ARM_FLAT_UNLOCK_START_RANGE = [
-    (-0.08, 0.08),
-    (-0.14, 0.14),
-    (-0.14, 0.14),
-    (-0.10, 0.10),
-    (-0.08, 0.08),
-    (-0.08, 0.08),
+    (-0.20, 0.20),
+    (-0.35, 0.35),
+    (-0.35, 0.35),
+    (-0.20, 0.20),
+    (-0.18, 0.18),
+    (-0.18, 0.18),
 ]
 ARM_FLAT_UNLOCK_FINAL_RANGE = [
-    (-0.60, 0.60),
-    (-0.90, 0.90),
-    (-0.90, 0.90),
-    (-0.50, 0.50),
-    (-0.40, 0.40),
-    (-0.40, 0.40),
+    (-1.20, 1.20),
+    (-1.20, 1.20),
+    (-1.20, 1.20),
+    (-0.80, 0.80),
+    (-0.70, 0.70),
+    (-0.70, 0.70),
 ]
 
 FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
@@ -390,19 +390,19 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             ".*_hip_joint": 0.125,
             ".*_thigh_joint": 0.25,
             ".*_calf_joint": 0.25,
-            "arm_joint1": 0.45,
-            "arm_joint2": 0.60,
-            "arm_joint3": 0.60,
-            "arm_joint4": 0.35,
-            "arm_joint5": 0.25,
-            "arm_joint6": 0.25,
+            "arm_joint1": 0.80,
+            "arm_joint2": 1.00,
+            "arm_joint3": 1.00,
+            "arm_joint4": 0.60,
+            "arm_joint5": 0.50,
+            "arm_joint6": 0.50,
         }
 
-        self.commands.base_velocity.rel_standing_envs = 0.50
+        self.commands.base_velocity.rel_standing_envs = 1.0
         self.commands.base_velocity.resampling_time_range = (6.0, 8.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (-0.25, 0.25)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.15, 0.15)
-        self.commands.base_velocity.ranges.ang_vel_z = (-0.25, 0.25)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
         self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_START_RANGE
         self.commands.arm_joint_pos.resampling_time_range = (4.0, 6.0)
 
@@ -445,35 +445,35 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
         }
         self._p4_reward_weights = {
             "lin_vel_z_l2": -1.5,
-            "ang_vel_xy_l2": -0.06,
-            "flat_orientation_l2": -0.35,
+            "ang_vel_xy_l2": -0.08,
+            "flat_orientation_l2": -0.45,
             "base_height_l2": -0.2,
-            "body_lin_acc_l2": -0.01,
+            "body_lin_acc_l2": -0.015,
             "joint_torques_l2": -1.5e-5,
             "joint_acc_l2": -1.0e-7,
             "joint_pos_limits": -2.0,
             "joint_power": -1.0e-5,
-            "stand_still": -1.4,
-            "joint_pos_penalty": -0.6,
+            "stand_still": -3.0,
+            "joint_pos_penalty": -1.0,
             "action_rate_l2": -0.01,
             "undesired_contacts": -1.0,
             "contact_forces": -1.0e-4,
-            "track_lin_vel_xy_exp": 3.5,
-            "track_ang_vel_z_exp": 1.5,
-            "feet_air_time": 0.08,
-            "feet_air_time_variance": -0.4,
-            "feet_contact_without_cmd": 0.2,
-            "feet_slide": -0.08,
-            "feet_gait": 0.20,
+            "track_lin_vel_xy_exp": 4.0,
+            "track_ang_vel_z_exp": 2.0,
+            "feet_air_time": 0.0,
+            "feet_air_time_variance": 0.0,
+            "feet_contact_without_cmd": 0.3,
+            "feet_slide": -0.12,
+            "feet_gait": 0.0,
             "arm_joint_pos_tracking_l2": -3.0,
             "arm_joint_vel_l2": -0.001,
             "arm_joint_acc_l2": -7.5e-7,
             "arm_joint_torques_l2": -6.0e-5,
-            "arm_action_rate_l2": -0.008,
-            "arm_joint_pos_limits": -1.5,
-            "arm_joint_deviation_l2": -0.05,
-            "arm_motion_tilt_penalty": -0.2,
-            "arm_action_in_unstable_base": -0.05,
+            "arm_action_rate_l2": -0.010,
+            "arm_joint_pos_limits": -2.0,
+            "arm_joint_deviation_l2": 0.0,
+            "arm_motion_tilt_penalty": -0.25,
+            "arm_action_in_unstable_base": -0.08,
             # Keep this effectively disabled until the gating logic uses delta-from-default.
             "arm_stable_track_bonus": 1.0e-6,
         }
