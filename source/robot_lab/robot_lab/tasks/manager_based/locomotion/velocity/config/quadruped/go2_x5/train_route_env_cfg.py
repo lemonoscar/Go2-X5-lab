@@ -29,19 +29,27 @@ ARM_ROUGH_WARMUP_RANGE = [
 ]
 ARM_FLAT_UNLOCK_START_RANGE = [
     (-0.20, 0.20),
-    (-0.35, 0.35),
-    (-0.35, 0.35),
+    (0.00, 0.35),
+    (0.00, 0.35),
     (-0.20, 0.20),
     (-0.18, 0.18),
     (-0.18, 0.18),
 ]
-ARM_FLAT_UNLOCK_FINAL_RANGE = [
+ARM_FLAT_UNLOCK_STAGE2_RANGE = [
     (-1.20, 1.20),
-    (-1.20, 1.20),
-    (-1.20, 1.20),
+    (0.00, 1.20),
+    (0.00, 1.20),
     (-0.80, 0.80),
     (-0.70, 0.70),
     (-0.70, 0.70),
+]
+ARM_FLAT_UNLOCK_STAGE3_RANGE = [
+    (-1.35, 1.35),
+    (0.00, 1.35),
+    (0.00, 1.35),
+    (-0.95, 0.95),
+    (-0.85, 0.85),
+    (-0.85, 0.85),
 ]
 
 FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
@@ -444,17 +452,17 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             "arm_stable_track_bonus": 1.0e-6,
         }
         self._p4_reward_weights = {
-            "lin_vel_z_l2": -1.5,
-            "ang_vel_xy_l2": -0.08,
-            "flat_orientation_l2": -0.45,
+            "lin_vel_z_l2": -1.8,
+            "ang_vel_xy_l2": -0.12,
+            "flat_orientation_l2": -0.60,
             "base_height_l2": -0.2,
-            "body_lin_acc_l2": -0.015,
+            "body_lin_acc_l2": -0.020,
             "joint_torques_l2": -1.5e-5,
             "joint_acc_l2": -1.0e-7,
             "joint_pos_limits": -2.0,
             "joint_power": -1.0e-5,
-            "stand_still": -3.0,
-            "joint_pos_penalty": -1.0,
+            "stand_still": -4.0,
+            "joint_pos_penalty": -1.2,
             "action_rate_l2": -0.01,
             "undesired_contacts": -1.0,
             "contact_forces": -1.0e-4,
@@ -462,18 +470,18 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             "track_ang_vel_z_exp": 2.0,
             "feet_air_time": 0.0,
             "feet_air_time_variance": 0.0,
-            "feet_contact_without_cmd": 0.3,
-            "feet_slide": -0.12,
+            "feet_contact_without_cmd": 0.4,
+            "feet_slide": -0.15,
             "feet_gait": 0.0,
-            "arm_joint_pos_tracking_l2": -3.0,
+            "arm_joint_pos_tracking_l2": -3.5,
             "arm_joint_vel_l2": -0.001,
             "arm_joint_acc_l2": -7.5e-7,
             "arm_joint_torques_l2": -6.0e-5,
-            "arm_action_rate_l2": -0.010,
+            "arm_action_rate_l2": -0.012,
             "arm_joint_pos_limits": -2.0,
             "arm_joint_deviation_l2": 0.0,
-            "arm_motion_tilt_penalty": -0.25,
-            "arm_action_in_unstable_base": -0.08,
+            "arm_motion_tilt_penalty": -0.35,
+            "arm_action_in_unstable_base": -0.12,
             # Keep this effectively disabled until the gating logic uses delta-from-default.
             "arm_stable_track_bonus": 1.0e-6,
         }
@@ -499,18 +507,22 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
                     reward_term.weight = p4_weight
 
         if self.arm_command_curriculum_enable:
+            arm_stage_2_iteration = max(int(self.arm_command_curriculum_iterations * 0.375), 1)
             self.curriculum.arm_command_range = CurrTerm(
-                func=mdp.arm_joint_position_range_curriculum,
+                func=mdp.arm_joint_position_range_staged_curriculum,
                 params={
                     "command_name": "arm_joint_pos",
-                    "initial_position_range": ARM_FLAT_UNLOCK_START_RANGE,
-                    "final_position_range": ARM_FLAT_UNLOCK_FINAL_RANGE,
-                    "curriculum_iterations": self.arm_command_curriculum_iterations,
+                    "position_ranges": [
+                        ARM_FLAT_UNLOCK_START_RANGE,
+                        ARM_FLAT_UNLOCK_STAGE2_RANGE,
+                        ARM_FLAT_UNLOCK_STAGE3_RANGE,
+                    ],
+                    "stage_iterations": [0, arm_stage_2_iteration, self.arm_command_curriculum_iterations],
                 },
             )
         else:
             self.curriculum.arm_command_range = None
-            self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_FINAL_RANGE
+            self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_STAGE3_RANGE
 
         for reward_name in (
             "is_terminated",
@@ -534,35 +546,31 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             self.rewards.arm_stable_track_bonus.params["vel_z_std"] = 0.25
             self.rewards.arm_stable_track_bonus.params["command_scale"] = 0.12
 
-        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.4, 1.25)
-        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.35, 1.10)
-        self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.25)
-        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.9, 1.1)
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.65, 1.00)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.55, 0.90)
+        self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.10)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.96, 1.04)
         self.events.randomize_rigid_body_mass_base.params["operation"] = "scale"
-        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.95, 1.08)
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.98, 1.03)
         self.events.randomize_com_positions.params["com_range"] = {
-            "x": (-0.02, 0.02),
-            "y": (-0.02, 0.02),
-            "z": (-0.02, 0.02),
+            "x": (-0.01, 0.01),
+            "y": (-0.01, 0.01),
+            "z": (-0.01, 0.01),
         }
         self.events.randomize_actuator_gains.mode = "interval"
-        self.events.randomize_actuator_gains.interval_range_s = (2.0, 4.0)
-        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.85, 1.15)
-        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.85, 1.15)
-        self.events.randomize_apply_external_force_torque.mode = "interval"
-        self.events.randomize_apply_external_force_torque.interval_range_s = (10.0, 16.0)
-        self.events.randomize_apply_external_force_torque.params["force_range"] = (-6.0, 6.0)
-        self.events.randomize_apply_external_force_torque.params["torque_range"] = (-2.0, 2.0)
-        self.events.randomize_push_robot.interval_range_s = (12.0, 18.0)
-        self.events.randomize_push_robot.params["velocity_range"] = {"x": (-0.15, 0.15), "y": (-0.15, 0.15)}
+        self.events.randomize_actuator_gains.interval_range_s = (3.0, 5.0)
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.95, 1.05)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.95, 1.05)
+        self.events.randomize_apply_external_force_torque = None
+        self.events.randomize_push_robot = None
 
-        self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.02, n_max=0.02)
-        self.observations.policy.projected_gravity.noise = Unoise(n_min=-0.03, n_max=0.03)
+        self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.015, n_max=0.015)
+        self.observations.policy.projected_gravity.noise = Unoise(n_min=-0.02, n_max=0.02)
 
-        self.sim2sim_action_delay_range = (0, 1)
-        self.sim2sim_action_hold_prob = 0.05
-        self.sim2sim_action_noise_std = 0.005
-        self.sim2sim_obs_delay_steps = 1
+        self.sim2sim_action_delay_range = (0, 0)
+        self.sim2sim_action_hold_prob = 0.02
+        self.sim2sim_action_noise_std = 0.003
+        self.sim2sim_obs_delay_steps = 0
         delay_steps = int(self.sim2sim_obs_delay_steps)
         if delay_steps > 0:
             delayed_terms = [

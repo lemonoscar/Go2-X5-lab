@@ -149,6 +149,69 @@ def arm_joint_position_range_curriculum(
     return progress
 
 
+def arm_joint_position_range_staged_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    command_name: str,
+    position_ranges: Sequence[Sequence[Sequence[float]]],
+    stage_iterations: Sequence[int],
+) -> None:
+    """Interpolate arm joint command ranges across multiple curriculum stages.
+
+    Args:
+        env: The learning environment.
+        env_ids: Environment IDs (unused, kept for curriculum interface compatibility).
+        command_name: Command term name.
+        position_ranges: A sequence of per-joint position ranges. Each element defines one stage.
+        stage_iterations: Cumulative iteration anchors for the corresponding stages. The first entry
+            should typically be 0. For example, with 3 stages and ``[0, 48, 128]``, the curriculum
+            interpolates stage 1 -> stage 2 over iterations [0, 48], then stage 2 -> stage 3 over
+            iterations [48, 128].
+    """
+
+    del env_ids
+
+    if len(position_ranges) != len(stage_iterations):
+        raise ValueError("position_ranges and stage_iterations must have the same length.")
+    if len(position_ranges) < 2:
+        raise ValueError("At least two stages are required for staged arm position curriculum.")
+    if any(stage_iterations[idx] > stage_iterations[idx + 1] for idx in range(len(stage_iterations) - 1)):
+        raise ValueError("stage_iterations must be non-decreasing.")
+
+    joint_count = len(position_ranges[0])
+    if any(len(stage_range) != joint_count for stage_range in position_ranges):
+        raise ValueError("All staged arm position ranges must have the same joint count.")
+
+    current_iter = getattr(env, "common_step_counter", 0) // getattr(env, "max_episode_length", 1)
+    cfg = env.command_manager.get_term(command_name).cfg
+
+    if current_iter <= stage_iterations[0]:
+        cfg.position_range = [tuple(bounds) for bounds in position_ranges[0]]
+        return 0.0
+
+    if current_iter >= stage_iterations[-1]:
+        cfg.position_range = [tuple(bounds) for bounds in position_ranges[-1]]
+        return float(len(position_ranges) - 1)
+
+    stage_idx = 1
+    while current_iter > stage_iterations[stage_idx]:
+        stage_idx += 1
+
+    prev_iter = stage_iterations[stage_idx - 1]
+    next_iter = stage_iterations[stage_idx]
+    denom = max(next_iter - prev_iter, 1)
+    progress = (current_iter - prev_iter) / denom
+
+    current_position_range = []
+    for prev_bounds, next_bounds in zip(position_ranges[stage_idx - 1], position_ranges[stage_idx], strict=True):
+        lower = prev_bounds[0] + (next_bounds[0] - prev_bounds[0]) * progress
+        upper = prev_bounds[1] + (next_bounds[1] - prev_bounds[1]) * progress
+        current_position_range.append((float(lower), float(upper)))
+
+    cfg.position_range = current_position_range
+    return float(stage_idx - 1) + progress
+
+
 def reward_weights_curriculum(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
