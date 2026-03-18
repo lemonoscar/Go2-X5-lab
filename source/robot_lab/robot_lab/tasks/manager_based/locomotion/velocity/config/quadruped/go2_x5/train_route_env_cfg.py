@@ -616,3 +616,64 @@ class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
         self.terminations.terrain_out_of_bounds = None
 
         self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5ArmWarmupRoughEnvCfg(Go2X5RobustRoughEnvCfg):
+    reward_curriculum_iterations: int = 96
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # P2b: keep the same route-stage policy interface as P2a, but unlock
+        # small-amplitude arm motions on rough terrain.
+        self.scene.num_envs = 2048
+        self.scene.terrain.max_init_terrain_level = 1
+
+        self.commands.base_velocity.rel_standing_envs = 0.15
+        self.commands.base_velocity.resampling_time_range = (4.0, 6.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.6, 0.6)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.8, 0.8)
+        self.commands.arm_joint_pos.position_range = ARM_ROUGH_WARMUP_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (4.0, 6.0)
+
+        p2a_final_weights = dict(self._p2_reward_weights)
+        p2b_target_weights = dict(p2a_final_weights)
+        p2b_target_weights.update(
+            {
+                "arm_joint_pos_tracking_l2": -4.5,
+                "arm_joint_vel_l2": -0.0015,
+                "arm_joint_acc_l2": -1.0e-6,
+                "arm_joint_torques_l2": -7.5e-5,
+                "arm_action_rate_l2": -0.008,
+                "arm_joint_pos_limits": -1.5,
+                "arm_joint_deviation_l2": -0.15,
+                "arm_motion_tilt_penalty": -0.25,
+                "arm_action_in_unstable_base": -0.05,
+                # Keep this effectively disabled until the gating logic is revisited.
+                "arm_stable_track_bonus": 1.0e-6,
+            }
+        )
+
+        self._p1_reward_weights = p2a_final_weights
+        self._p2_reward_weights = p2b_target_weights
+
+        if self.reward_curriculum_enable and getattr(self.curriculum, "reward_weights", None) is not None:
+            self.curriculum.reward_weights.params["p1_weights"] = self._p1_reward_weights
+            self.curriculum.reward_weights.params["p2_weights"] = self._p2_reward_weights
+            self.curriculum.reward_weights.params["curriculum_iterations"] = self.reward_curriculum_iterations
+            for attr_name, p1_weight in self._p1_reward_weights.items():
+                reward_term = getattr(self.rewards, attr_name, None)
+                if reward_term is not None:
+                    reward_term.weight = p1_weight
+        else:
+            for attr_name, p2_weight in self._p2_reward_weights.items():
+                reward_term = getattr(self.rewards, attr_name, None)
+                if reward_term is not None:
+                    reward_term.weight = p2_weight
+
+        self.rewards.arm_stable_track_bonus.params["tracking_std"] = 0.18
+        self.rewards.arm_stable_track_bonus.params["tilt_std"] = 0.22
+        self.rewards.arm_stable_track_bonus.params["vel_z_std"] = 0.3
+        self.rewards.arm_stable_track_bonus.params["command_scale"] = 0.08

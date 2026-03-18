@@ -67,3 +67,15 @@ class Go2X5RobustRoughPPORunnerCfg(Go2X5RoughPPORunnerCfg):
         self.save_interval = 250
         self.experiment_name = "go2_x5_robust_rough"
         self.algorithm.entropy_coef = 0.004
+
+
+@configclass
+class Go2X5ArmWarmupRoughPPORunnerCfg(Go2X5RobustRoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 4000
+        self.save_interval = 250
+        self.experiment_name = "go2_x5_arm_warmup_rough"
+        self.algorithm.entropy_coef = 0.003

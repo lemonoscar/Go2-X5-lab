@@ -89,3 +89,10 @@ class Go2X5RobustRoughTrainerCfg(Go2X5RoughTrainerCfg):
             cusrl.hook.AdaptiveLRSchedule(desired_kl_divergence=0.01),
         ],
     )
+
+
+@dataclass
+class Go2X5ArmWarmupRoughTrainerCfg(Go2X5RobustRoughTrainerCfg):
+    max_iterations = 4000
+    save_interval = 100
+    experiment_name = "go2_x5_arm_warmup_rough"

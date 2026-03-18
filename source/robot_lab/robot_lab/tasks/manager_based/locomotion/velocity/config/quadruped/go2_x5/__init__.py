@@ -52,3 +52,14 @@ gym.register(
         "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:Go2X5RobustRoughTrainerCfg",
     },
 )
+
+gym.register(
+    id="RobotLab-Isaac-Velocity-Rough-Go2-X5-ArmWarmup-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.train_route_env_cfg:Go2X5ArmWarmupRoughEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5ArmWarmupRoughPPORunnerCfg",
+        "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:Go2X5ArmWarmupRoughTrainerCfg",
+    },
+)
