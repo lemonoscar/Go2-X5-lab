@@ -9,4 +9,7 @@ Python module serving as a project/extension template.
 from .tasks import *
 
 # Register UI extensions.
-from .ui_extension_example import *
+try:  # pragma: no cover - optional in headless or smoke-only environments
+    from .ui_extension_example import *
+except Exception:
+    pass
