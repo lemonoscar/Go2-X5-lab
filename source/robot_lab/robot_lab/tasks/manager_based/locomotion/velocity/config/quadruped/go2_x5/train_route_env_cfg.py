@@ -402,8 +402,8 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
         # actually shape a walking gait instead of being gated off by zero commands.
         self.commands.base_velocity.rel_standing_envs = 0.0
         self.commands.base_velocity.resampling_time_range = (5.0, 7.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (-0.18, 0.18)
-        self.commands.base_velocity.ranges.lin_vel_y = (-0.10, 0.10)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.5, 0.5)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.5, 0.5)
         self.commands.base_velocity.ranges.ang_vel_z = (-0.20, 0.20)
         self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_START_RANGE
         self.commands.arm_joint_pos.resampling_time_range = (4.0, 6.0)
