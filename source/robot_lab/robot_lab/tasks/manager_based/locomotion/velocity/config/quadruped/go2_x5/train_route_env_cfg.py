@@ -398,17 +398,31 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             "arm_joint6": 0.70,
         }
 
-        self.commands.base_velocity.rel_standing_envs = 1.0
-        self.commands.base_velocity.resampling_time_range = (6.0, 8.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (0.0, 0.0)
-        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        # Arm unlock keeps low-speed locomotion enabled so leg-lifting rewards can
+        # actually shape a walking gait instead of being gated off by zero commands.
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.resampling_time_range = (5.0, 7.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.18, 0.18)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.10, 0.10)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.20, 0.20)
         self.commands.arm_joint_pos.position_range = ARM_FLAT_UNLOCK_START_RANGE
         self.commands.arm_joint_pos.resampling_time_range = (4.0, 6.0)
 
         # Keep the base command distribution fixed during arm unlock.
         self.curriculum.command_levels_lin_vel = None
         self.curriculum.command_levels_ang_vel = None
+
+        if self.rewards.feet_height_body is None:
+            self.rewards.feet_height_body = RewTerm(
+                func=mdp.feet_height_body,
+                weight=0.0,
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=[self.foot_link_name]),
+                    "tanh_mult": 2.0,
+                    "target_height": -0.2,
+                    "command_name": "base_velocity",
+                },
+            )
 
         self._p1_reward_weights = {
             "lin_vel_z_l2": -1.5,
@@ -427,11 +441,12 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             "contact_forces": -1.0e-4,
             "track_lin_vel_xy_exp": 4.0,
             "track_ang_vel_z_exp": 1.8,
-            "feet_air_time": 0.15,
+            "feet_air_time": 0.22,
             "feet_air_time_variance": -0.5,
             "feet_contact_without_cmd": 0.15,
-            "feet_slide": -0.08,
-            "feet_gait": 0.25,
+            "feet_slide": -0.18,
+            "feet_height_body": -2.5,
+            "feet_gait": 0.30,
             "arm_joint_pos_tracking_l2": -6.0,
             "arm_joint_vel_l2": -0.001,
             "arm_joint_acc_l2": -5.0e-7,
@@ -460,11 +475,12 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             "contact_forces": -1.0e-4,
             "track_lin_vel_xy_exp": 4.0,
             "track_ang_vel_z_exp": 2.0,
-            "feet_air_time": 0.0,
+            "feet_air_time": 0.12,
             "feet_air_time_variance": 0.0,
             "feet_contact_without_cmd": 0.4,
-            "feet_slide": -0.15,
-            "feet_gait": 0.0,
+            "feet_slide": -0.28,
+            "feet_height_body": -4.0,
+            "feet_gait": 0.12,
             "arm_joint_pos_tracking_l2": -3.5,
             "arm_joint_vel_l2": -0.001,
             "arm_joint_acc_l2": -7.5e-7,
@@ -520,13 +536,13 @@ class Go2X5ArmUnlockFlatEnvCfg(Go2X5FoundationFlatEnvCfg):
             "feet_contact",
             "feet_stumble",
             "feet_height",
-            "feet_height_body",
         ):
             reward_term = getattr(self.rewards, reward_name, None)
             if reward_term is not None:
                 reward_term.weight = 0.0
         self.rewards.base_height_l2.params["target_height"] = 0.33
-        self.rewards.feet_air_time.params["threshold"] = 0.45
+        self.rewards.feet_air_time.params["threshold"] = 0.30
+        self.rewards.feet_height_body.params["target_height"] = -0.16
         self.rewards.upward.weight = 1.0
         if self.rewards.arm_stable_track_bonus is not None:
             self.rewards.arm_stable_track_bonus.params["tracking_std"] = 0.20
