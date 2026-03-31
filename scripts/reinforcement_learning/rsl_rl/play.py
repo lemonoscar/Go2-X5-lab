@@ -83,6 +83,12 @@ parser.add_argument(
     help="Provide multiple arm joint poses (repeat per env).",
 )
 parser.add_argument(
+    "--arm_cmd_pose_sequence",
+    action="store_true",
+    default=False,
+    help="Play arm poses sequentially over time using arm_cmd_pose_set or the built-in default pose list.",
+)
+parser.add_argument(
     "--arm_cmd_pose_repeat",
     type=int,
     default=1,
@@ -106,6 +112,18 @@ parser.add_argument(
     type=float,
     default=2.0,
     help="Seconds per pose when alternating between arm_cmd_pose and arm_cmd_pose_alt.",
+)
+parser.add_argument(
+    "--arm_cmd_sequence_pose_s",
+    type=float,
+    default=5.0,
+    help="Seconds to command each pose when arm_cmd_pose_sequence is enabled.",
+)
+parser.add_argument(
+    "--arm_cmd_sequence_default_s",
+    type=float,
+    default=5.0,
+    help="Seconds to command the default arm pose between consecutive poses in arm_cmd_pose_sequence mode.",
 )
 parser.add_argument(
     "--arm_cmd_schedule",
@@ -482,12 +500,41 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     arm_schedule = None
     arm_pose_set = None
     arm_pose_set_targets = None
+    arm_pose_sequence = None
     default_arm_sequence = None
     arm_action_map = None
     base_cmd_term = None
     fixed_base_cmd = None
+    default_pose_set_raw = [
+        [0.51, 2.13, 1.02, 0.09, 0.17, 0.17],
+        [-0.51, 2.13, 1.02, 0.09, 0.17, 0.17],
+        [0.77, 1.36, 1.36, -0.09, 0.0, 1.02],
+        [1.53, 2.21, 2.55, -0.09, 0.0, 0.09],
+        [0.0, 2.21, 2.21, -0.09, -0.09, 0.09],
+    ]
+
+    def resolve_arm_action_map(current_arm_term):
+        action_term = env.unwrapped.action_manager._terms.get("joint_pos", None)
+        if action_term is None:
+            return None
+        name_to_index = {name: i for i, name in enumerate(action_term._joint_names)}
+        arm_names = list(current_arm_term.cfg.joint_names)
+        arm_action_indices = [name_to_index[name] for name in arm_names if name in name_to_index]
+        if len(arm_action_indices) != len(arm_names):
+            print("[WARN] Could not resolve all arm joints in action mapping.")
+            return None
+        return {
+            "indices": arm_action_indices,
+            "scale": action_term._scale,
+            "offset": action_term._offset,
+        }
+
     if args_cli.arm_cmd_schedule and args_cli.arm_cmd_pose is not None:
         raise ValueError("arm_cmd_schedule is not compatible with arm_cmd_pose overrides.")
+    if args_cli.arm_cmd_pose_sequence and (args_cli.arm_cmd_pose is not None or args_cli.arm_cmd_pose_alt is not None):
+        raise ValueError("arm_cmd_pose_sequence is not compatible with arm_cmd_pose or arm_cmd_pose_alt.")
+    if args_cli.arm_cmd_pose_sequence and args_cli.arm_cmd_schedule:
+        raise ValueError("arm_cmd_pose_sequence is not compatible with arm_cmd_schedule.")
     if args_cli.arm_cmd_pose_set is not None and (
         args_cli.arm_cmd_pose is not None or args_cli.arm_cmd_schedule
     ):
@@ -501,6 +548,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         defaults = arm_term.asset.data.default_joint_pos[:, arm_term.joint_ids]
         pose_values = torch.tensor(args_cli.arm_cmd_pose, device=defaults.device)
         arm_pose = pose_values if args_cli.arm_cmd_pose_absolute else defaults + pose_values
+        arm_action_map = resolve_arm_action_map(arm_term)
         if args_cli.arm_cmd_pose_alt is not None:
             if len(args_cli.arm_cmd_pose_alt) != len(arm_term.joint_ids):
                 raise ValueError("arm_cmd_pose_alt length must match arm joint count.")
@@ -538,6 +586,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             "target_offsets": target_offsets,
             "sample_offsets": sample_offsets,
         }
+        arm_action_map = resolve_arm_action_map(arm_term)
     if args_cli.arm_cmd_pose_set is not None:
         arm_term = env.unwrapped.command_manager._terms.get("arm_joint_pos", None)
         if arm_term is None:
@@ -562,6 +611,35 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             min_pos = limits[..., 0]
             max_pos = limits[..., 1]
             arm_pose_set_targets = torch.max(torch.min(arm_pose_set_targets, max_pos), min_pos)
+        arm_action_map = resolve_arm_action_map(arm_term)
+    if args_cli.arm_cmd_pose_sequence:
+        arm_term = env.unwrapped.command_manager._terms.get("arm_joint_pos", None)
+        if arm_term is None:
+            raise RuntimeError("arm_cmd_pose_sequence requested but arm_joint_pos command is not active.")
+        defaults = arm_term.asset.data.default_joint_pos[:, arm_term.joint_ids]
+        pose_set_raw = args_cli.arm_cmd_pose_set if args_cli.arm_cmd_pose_set is not None else default_pose_set_raw
+        poses = []
+        for pose in pose_set_raw:
+            if len(pose) != len(arm_term.joint_ids):
+                raise ValueError("arm_cmd_pose_sequence entry length must match arm joint count.")
+            pose_values = torch.tensor(pose, device=defaults.device)
+            poses.append(pose_values)
+        targets = torch.stack(poses, dim=0)
+        if args_cli.arm_cmd_pose_set is not None and not args_cli.arm_cmd_pose_absolute:
+            targets = defaults[0].unsqueeze(0) + targets
+        if arm_term.cfg.clip_to_joint_limits:
+            limits = arm_term.asset.data.soft_joint_pos_limits[:, arm_term.joint_ids, :]
+            min_pos = limits[0, :, 0]
+            max_pos = limits[0, :, 1]
+            targets = torch.max(torch.min(targets, max_pos), min_pos)
+        arm_pose_sequence = {
+            "defaults": defaults,
+            "targets": targets,
+            "pose_steps": max(1, int(args_cli.arm_cmd_sequence_pose_s / dt)),
+            "default_steps": max(1, int(args_cli.arm_cmd_sequence_default_s / dt)),
+            "num_envs": defaults.shape[0],
+        }
+        arm_action_map = resolve_arm_action_map(arm_term)
 
     base_cmd_term = env.unwrapped.command_manager._terms.get("base_velocity", None)
     if args_cli.keyboard and base_cmd_term is None:
@@ -591,13 +669,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             defaults = arm_term.asset.data.default_joint_pos[:, arm_term.joint_ids]
             pose_set_raw = getattr(env_cfg, "arm_pose_set", None)
             if pose_set_raw is None:
-                pose_set_raw = [
-                    [0.51, 2.13, 1.02, 0.09, 0.17, 0.17],
-                    [-0.51, 2.13, 1.02, 0.09, 0.17, 0.17],
-                    [0.77, 1.36, 1.36, -0.09, 0.0, 1.02],
-                    [1.53, 2.21, 2.55, -0.09, 0.0, 0.09],
-                    [0.0, 2.21, 2.21, -0.09, -0.09, 0.09],
-                ]
+                pose_set_raw = default_pose_set_raw
             pose_set = torch.tensor(pose_set_raw, device=defaults.device)
             if pose_set.ndim != 2 or pose_set.shape[1] != len(arm_term.joint_ids):
                 raise ValueError(
@@ -623,19 +695,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 "move_steps": move_steps,
                 "hold_steps": hold_steps,
             }
-            action_term = env.unwrapped.action_manager._terms.get("joint_pos", None)
-            if action_term is not None:
-                name_to_index = {name: i for i, name in enumerate(action_term._joint_names)}
-                arm_names = list(arm_term.cfg.joint_names)
-                arm_action_indices = [name_to_index[name] for name in arm_names if name in name_to_index]
-                if len(arm_action_indices) == len(arm_names):
-                    arm_action_map = {
-                        "indices": arm_action_indices,
-                        "scale": action_term._scale,
-                        "offset": action_term._offset,
-                    }
-                else:
-                    print("[WARN] Could not resolve all arm joints in action mapping.")
+            arm_action_map = resolve_arm_action_map(arm_term)
     # simulate environment
     try:
         while simulation_app.is_running():
@@ -671,6 +731,19 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                             max_pos = limits[..., 1]
                             target_pos = torch.max(torch.min(target_pos, max_pos), min_pos)
                         desired_arm_pos = target_pos
+                if arm_pose_sequence is not None:
+                    seq = arm_pose_sequence
+                    block_steps = seq["pose_steps"] + seq["default_steps"]
+                    total_steps = seq["targets"].shape[0] * block_steps
+                    if timestep >= total_steps:
+                        desired_arm_pos = seq["defaults"]
+                    else:
+                        pose_idx = timestep // block_steps
+                        phase = timestep % block_steps
+                        if phase < seq["pose_steps"]:
+                            desired_arm_pos = seq["targets"][pose_idx].unsqueeze(0).repeat(seq["num_envs"], 1)
+                        else:
+                            desired_arm_pos = seq["defaults"]
                 if default_arm_sequence is not None:
                     seq = default_arm_sequence
                     if timestep < seq["warmup_steps"]:
