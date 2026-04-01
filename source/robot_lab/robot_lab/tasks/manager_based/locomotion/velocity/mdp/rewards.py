@@ -799,6 +799,44 @@ def arm_motion_tilt_penalty(
     return reward
 
 
+def arm_pose_conditioned_base_stability(
+    env: ManagerBasedRLEnv,
+    arm_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    base_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    pose_clip: float | None = None,
+    speed_clip: float | None = None,
+    pose_weight: float = 1.0,
+    speed_weight: float = 0.35,
+    tilt_weight: float = 1.0,
+    ang_vel_weight: float = 0.35,
+    lin_vel_weight: float = 0.20,
+) -> torch.Tensor:
+    """Penalize base instability more strongly when the arm is far from its default pose.
+
+    This term models the intuition that a heavy arm at a large offset creates a harder
+    stabilization problem than a folded arm near the default posture.
+    """
+    arm_asset: Articulation = env.scene[arm_asset_cfg.name]
+    base_asset: RigidObject = env.scene[base_asset_cfg.name]
+
+    arm_offset = (
+        arm_asset.data.joint_pos[:, arm_asset_cfg.joint_ids] - arm_asset.data.default_joint_pos[:, arm_asset_cfg.joint_ids]
+    )
+    arm_pose_mag = torch.linalg.norm(arm_offset, dim=1)
+    arm_speed = torch.linalg.norm(arm_asset.data.joint_vel[:, arm_asset_cfg.joint_ids], dim=1)
+    if pose_clip is not None:
+        arm_pose_mag = torch.clamp(arm_pose_mag, max=pose_clip)
+    if speed_clip is not None:
+        arm_speed = torch.clamp(arm_speed, max=speed_clip)
+
+    arm_difficulty = pose_weight * arm_pose_mag + speed_weight * arm_speed
+    base_tilt = torch.linalg.norm(base_asset.data.projected_gravity_b[:, :2], dim=1)
+    ang_vel_xy = torch.linalg.norm(base_asset.data.root_ang_vel_b[:, :2], dim=1)
+    lin_vel_z = torch.abs(base_asset.data.root_lin_vel_b[:, 2])
+    base_instability = tilt_weight * base_tilt + ang_vel_weight * ang_vel_xy + lin_vel_weight * lin_vel_z
+    return arm_difficulty * base_instability
+
+
 def arm_stable_track_exp(
     env: ManagerBasedRLEnv,
     command_name: str,
@@ -836,6 +874,160 @@ def arm_stable_track_exp(
 
     reward = tracking_term * tilt_term * vertical_term * command_gate
     return reward
+
+
+class ZeroCmdXYPositionDriftUnderArmMotion(ManagerTermBase):
+    """Penalize planar drift relative to an anchor during zero-base-command arm motion."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self._xy_anchor = torch.zeros((env.num_envs, 2), device=env.device)
+        self._prev_arm_command = torch.zeros((env.num_envs, 0), device=env.device)
+        self._prev_zero_cmd_mask = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        self._initialized = False
+
+    def reset(self, env_ids: torch.Tensor | slice | None = None):
+        if env_ids is None:
+            env_ids = slice(None)
+        self._xy_anchor[env_ids] = 0.0
+        self._prev_zero_cmd_mask[env_ids] = False
+        if self._prev_arm_command.shape[1] > 0:
+            self._prev_arm_command[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        arm_command_name: str,
+        base_asset_cfg: SceneEntityCfg,
+        command_threshold: float = 0.08,
+        arm_command_change_threshold: float = 0.05,
+        arm_pose_weight: float = 0.6,
+        arm_speed_weight: float = 0.4,
+    ) -> torch.Tensor:
+        base_asset: RigidObject = env.scene[base_asset_cfg.name]
+        base_cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+        zero_cmd_mask = base_cmd < command_threshold
+
+        arm_command = env.command_manager.get_command(arm_command_name)
+        if not self._initialized or self._prev_arm_command.shape[1] != arm_command.shape[1]:
+            self._prev_arm_command = torch.zeros_like(arm_command)
+            self._initialized = True
+
+        arm_delta = torch.linalg.norm(arm_command - self._prev_arm_command, dim=1)
+        entered_zero_cmd = zero_cmd_mask & ~self._prev_zero_cmd_mask
+        episode_start = env.episode_length_buf <= 1
+        refresh_anchor = episode_start | entered_zero_cmd | (zero_cmd_mask & (arm_delta > arm_command_change_threshold))
+        if torch.any(refresh_anchor):
+            self._xy_anchor[refresh_anchor] = base_asset.data.root_pos_w[refresh_anchor, :2]
+
+        arm_asset_cfg = self.cfg.params["arm_asset_cfg"]
+        arm_asset: Articulation = env.scene[arm_asset_cfg.name]
+        arm_offset = (
+            arm_asset.data.joint_pos[:, arm_asset_cfg.joint_ids] - arm_asset.data.default_joint_pos[:, arm_asset_cfg.joint_ids]
+        )
+        arm_pose_mag = torch.linalg.norm(arm_offset, dim=1)
+        arm_speed = torch.linalg.norm(arm_asset.data.joint_vel[:, arm_asset_cfg.joint_ids], dim=1)
+        arm_activity = arm_pose_weight * arm_pose_mag + arm_speed_weight * arm_speed
+
+        xy_drift = torch.linalg.norm(base_asset.data.root_pos_w[:, :2] - self._xy_anchor, dim=1)
+
+        self._prev_arm_command.copy_(arm_command)
+        self._prev_zero_cmd_mask.copy_(zero_cmd_mask)
+        return xy_drift * arm_activity * zero_cmd_mask
+
+
+class ZeroCmdYawDriftUnderArmMotion(ManagerTermBase):
+    """Penalize yaw drift relative to an anchor during zero-base-command arm motion."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self._yaw_anchor = torch.zeros(env.num_envs, device=env.device)
+        self._prev_arm_command = torch.zeros((env.num_envs, 0), device=env.device)
+        self._prev_zero_cmd_mask = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+        self._initialized = False
+
+    def reset(self, env_ids: torch.Tensor | slice | None = None):
+        if env_ids is None:
+            env_ids = slice(None)
+        self._yaw_anchor[env_ids] = 0.0
+        self._prev_zero_cmd_mask[env_ids] = False
+        if self._prev_arm_command.shape[1] > 0:
+            self._prev_arm_command[env_ids] = 0.0
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        arm_command_name: str,
+        base_asset_cfg: SceneEntityCfg,
+        command_threshold: float = 0.08,
+        arm_command_change_threshold: float = 0.05,
+        arm_pose_weight: float = 0.6,
+        arm_speed_weight: float = 0.4,
+    ) -> torch.Tensor:
+        base_asset: RigidObject = env.scene[base_asset_cfg.name]
+        base_cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+        zero_cmd_mask = base_cmd < command_threshold
+
+        arm_command = env.command_manager.get_command(arm_command_name)
+        if not self._initialized or self._prev_arm_command.shape[1] != arm_command.shape[1]:
+            self._prev_arm_command = torch.zeros_like(arm_command)
+            self._initialized = True
+
+        arm_delta = torch.linalg.norm(arm_command - self._prev_arm_command, dim=1)
+        entered_zero_cmd = zero_cmd_mask & ~self._prev_zero_cmd_mask
+        episode_start = env.episode_length_buf <= 1
+        refresh_anchor = episode_start | entered_zero_cmd | (zero_cmd_mask & (arm_delta > arm_command_change_threshold))
+
+        current_yaw = math_utils.euler_xyz_from_quat(base_asset.data.root_quat_w)[2]
+        if torch.any(refresh_anchor):
+            self._yaw_anchor[refresh_anchor] = current_yaw[refresh_anchor]
+
+        arm_asset_cfg = self.cfg.params["arm_asset_cfg"]
+        arm_asset: Articulation = env.scene[arm_asset_cfg.name]
+        arm_offset = (
+            arm_asset.data.joint_pos[:, arm_asset_cfg.joint_ids] - arm_asset.data.default_joint_pos[:, arm_asset_cfg.joint_ids]
+        )
+        arm_pose_mag = torch.linalg.norm(arm_offset, dim=1)
+        arm_speed = torch.linalg.norm(arm_asset.data.joint_vel[:, arm_asset_cfg.joint_ids], dim=1)
+        arm_activity = arm_pose_weight * arm_pose_mag + arm_speed_weight * arm_speed
+
+        yaw_drift = torch.atan2(torch.sin(current_yaw - self._yaw_anchor), torch.cos(current_yaw - self._yaw_anchor)).abs()
+
+        self._prev_arm_command.copy_(arm_command)
+        self._prev_zero_cmd_mask.copy_(zero_cmd_mask)
+        return yaw_drift * arm_activity * zero_cmd_mask
+
+
+def zero_cmd_drift_under_arm_motion(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    arm_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    base_asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    command_threshold: float = 0.08,
+    pose_weight: float = 0.6,
+    speed_weight: float = 0.4,
+    xy_vel_weight: float = 1.0,
+    yaw_weight: float = 0.35,
+) -> torch.Tensor:
+    """Penalize base drift under arm motion when the commanded base velocity is near zero."""
+    arm_asset: Articulation = env.scene[arm_asset_cfg.name]
+    base_asset: RigidObject = env.scene[base_asset_cfg.name]
+
+    base_cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    zero_cmd_mask = base_cmd < command_threshold
+
+    arm_offset = (
+        arm_asset.data.joint_pos[:, arm_asset_cfg.joint_ids] - arm_asset.data.default_joint_pos[:, arm_asset_cfg.joint_ids]
+    )
+    arm_pose_mag = torch.linalg.norm(arm_offset, dim=1)
+    arm_speed = torch.linalg.norm(arm_asset.data.joint_vel[:, arm_asset_cfg.joint_ids], dim=1)
+    arm_activity = pose_weight * arm_pose_mag + speed_weight * arm_speed
+
+    drift = xy_vel_weight * torch.linalg.norm(base_asset.data.root_lin_vel_b[:, :2], dim=1)
+    drift += yaw_weight * torch.abs(base_asset.data.root_ang_vel_b[:, 2])
+    return drift * arm_activity * zero_cmd_mask
 
 
 def arm_action_in_unstable_base(

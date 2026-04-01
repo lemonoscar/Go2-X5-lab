@@ -241,6 +241,63 @@ class _Go2X5LeggedBaseEnvCfg(LocomotionVelocityRoughEnvCfg):
                 "ang_vel_threshold": 1.5,
             },
         )
+        self.rewards.arm_pose_conditioned_base_stability = RewTerm(
+            func=mdp.arm_pose_conditioned_base_stability,
+            weight=0.0,
+            params={
+                "arm_asset_cfg": arm_joint_cfg,
+                "base_asset_cfg": base_body_cfg,
+                "pose_clip": 4.5,
+                "speed_clip": 6.0,
+                "pose_weight": 1.0,
+                "speed_weight": 0.30,
+                "tilt_weight": 1.0,
+                "ang_vel_weight": 0.35,
+                "lin_vel_weight": 0.20,
+            },
+        )
+        self.rewards.zero_cmd_drift_under_arm_motion = RewTerm(
+            func=mdp.zero_cmd_drift_under_arm_motion,
+            weight=0.0,
+            params={
+                "command_name": "base_velocity",
+                "arm_asset_cfg": arm_joint_cfg,
+                "base_asset_cfg": base_body_cfg,
+                "command_threshold": 0.08,
+                "pose_weight": 0.6,
+                "speed_weight": 0.4,
+                "xy_vel_weight": 1.0,
+                "yaw_weight": 0.35,
+            },
+        )
+        self.rewards.zero_cmd_xy_position_drift_under_arm_motion = RewTerm(
+            func=mdp.ZeroCmdXYPositionDriftUnderArmMotion,
+            weight=0.0,
+            params={
+                "command_name": "base_velocity",
+                "arm_command_name": "arm_joint_pos",
+                "arm_asset_cfg": arm_joint_cfg,
+                "base_asset_cfg": base_body_cfg,
+                "command_threshold": 0.08,
+                "arm_command_change_threshold": 0.05,
+                "arm_pose_weight": 0.6,
+                "arm_speed_weight": 0.4,
+            },
+        )
+        self.rewards.zero_cmd_yaw_drift_under_arm_motion = RewTerm(
+            func=mdp.ZeroCmdYawDriftUnderArmMotion,
+            weight=0.0,
+            params={
+                "command_name": "base_velocity",
+                "arm_command_name": "arm_joint_pos",
+                "arm_asset_cfg": arm_joint_cfg,
+                "base_asset_cfg": base_body_cfg,
+                "command_threshold": 0.08,
+                "arm_command_change_threshold": 0.05,
+                "arm_pose_weight": 0.6,
+                "arm_speed_weight": 0.4,
+            },
+        )
         self.rewards.arm_stable_track_bonus = RewTerm(
             func=mdp.arm_stable_track_exp,
             weight=0.0,
@@ -756,27 +813,28 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
         # Arm tracking is handled by the dedicated arm command follower, not by PPO actions.
         # Keep only the coupling/stability terms that the base can meaningfully influence.
         dog_only_weights = {
-            "lin_vel_z_l2": -1.6,
+            "lin_vel_z_l2": -1.8,
             "ang_vel_xy_l2": -0.10,
-            "flat_orientation_l2": -0.50,
+            "flat_orientation_l2": -0.55,
             "base_height_l2": -0.2,
-            "body_lin_acc_l2": -0.015,
+            "body_lin_acc_l2": -0.020,
             "joint_torques_l2": -1.5e-5,
             "joint_acc_l2": -1.0e-7,
             "joint_pos_limits": -2.0,
             "joint_power": -1.0e-5,
-            "stand_still": -2.0,
-            "joint_pos_penalty": -0.9,
+            "stand_still": -2.5,
+            "joint_pos_penalty": -0.60,
             "action_rate_l2": -0.01,
             "undesired_contacts": -1.0,
             "contact_forces": -1.0e-4,
             "track_lin_vel_xy_exp": 4.5,
             "track_ang_vel_z_exp": 2.2,
-            "feet_air_time": 0.08,
-            "feet_air_time_variance": -0.2,
-            "feet_contact_without_cmd": 0.2,
-            "feet_slide": -0.12,
-            "feet_gait": 0.20,
+            "feet_air_time": 0.16,
+            "feet_air_time_variance": -0.10,
+            "feet_contact_without_cmd": 0.25,
+            "feet_slide": -0.24,
+            "feet_height_body": -4.5,
+            "feet_gait": 0.38,
             "arm_joint_pos_tracking_l2": 0.0,
             "arm_joint_vel_l2": 0.0,
             "arm_joint_acc_l2": 0.0,
@@ -784,7 +842,11 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             "arm_action_rate_l2": 0.0,
             "arm_joint_pos_limits": 0.0,
             "arm_joint_deviation_l2": 0.0,
-            "arm_motion_tilt_penalty": -0.30,
+            "arm_motion_tilt_penalty": -0.18,
+            "arm_pose_conditioned_base_stability": -0.22,
+            "zero_cmd_drift_under_arm_motion": -0.20,
+            "zero_cmd_xy_position_drift_under_arm_motion": -1.40,
+            "zero_cmd_yaw_drift_under_arm_motion": -0.45,
             "arm_action_in_unstable_base": 0.0,
             "arm_stable_track_bonus": 0.0,
         }
@@ -794,6 +856,11 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             reward_term = getattr(self.rewards, attr_name, None)
             if reward_term is not None:
                 reward_term.weight = weight
+
+        self.rewards.base_height_l2.params["target_height"] = 0.33
+        self.rewards.feet_air_time.params["threshold"] = 0.35
+        self.rewards.feet_height_body.params["target_height"] = -0.16
+        self.rewards.upward.weight = 1.0
 
         self.disable_zero_weight_rewards()
 
