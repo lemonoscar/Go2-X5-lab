@@ -705,6 +705,100 @@ class Go2X5ArmLocomotionFlatEnvCfg(Go2X5ArmUnlockFlatEnvCfg):
 
 
 @configclass
+class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
+    """Flat locomotion task where PPO controls only the 12 leg joints.
+
+    Arm motion is driven by the arm command term directly through a zero-dim action
+    follower, so the policy learns to stabilize and move the base under commanded arm motion.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Keep full robot state and task commands in observations, but remove arm joints
+        # from the learned action head.
+        self.actions.joint_pos.scale = {
+            ".*_hip_joint": 0.125,
+            ".*_thigh_joint": 0.25,
+            ".*_calf_joint": 0.25,
+        }
+        self.actions.joint_pos.clip = {".*": (-100.0, 100.0)}
+        self.actions.joint_pos.joint_names = self.dog_joint_names
+        self.actions.arm_joint_pos = mdp.ArmCommandPositionActionCfg(
+            asset_name="robot",
+            joint_names=self.arm_joint_names,
+            command_name="arm_joint_pos",
+            preserve_order=True,
+        )
+
+        # Preserve the historical 18-d action observation layout by padding the leg actions
+        # with six zeros for the arm slots. This lets us reuse most of the old first-layer weights.
+        self.observations.policy.actions.func = mdp.last_action_with_padding
+        self.observations.policy.actions.params = {"total_action_dim": len(self.joint_names), "pad_value": 0.0}
+        self.observations.critic.actions.func = mdp.last_action_with_padding
+        self.observations.critic.actions.params = {"total_action_dim": len(self.joint_names), "pad_value": 0.0}
+
+        # Expose a placeholder gripper scalar in the observation interface. The locomotion route
+        # does not actuate the gripper yet, but keeping the channel visible reserves the API.
+        self.observations.policy.gripper_command = ObsTerm(
+            func=mdp.constant_observation,
+            params={"dim": 1, "value": 0.0},
+            clip=(-1.0, 1.0),
+            scale=1.0,
+        )
+        self.observations.critic.gripper_command = ObsTerm(
+            func=mdp.constant_observation,
+            params={"dim": 1, "value": 0.0},
+            clip=(-1.0, 1.0),
+            scale=1.0,
+        )
+
+        # Arm tracking is handled by the dedicated arm command follower, not by PPO actions.
+        # Keep only the coupling/stability terms that the base can meaningfully influence.
+        dog_only_weights = {
+            "lin_vel_z_l2": -1.6,
+            "ang_vel_xy_l2": -0.10,
+            "flat_orientation_l2": -0.50,
+            "base_height_l2": -0.2,
+            "body_lin_acc_l2": -0.015,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -2.0,
+            "joint_power": -1.0e-5,
+            "stand_still": -2.0,
+            "joint_pos_penalty": -0.9,
+            "action_rate_l2": -0.01,
+            "undesired_contacts": -1.0,
+            "contact_forces": -1.0e-4,
+            "track_lin_vel_xy_exp": 4.5,
+            "track_ang_vel_z_exp": 2.2,
+            "feet_air_time": 0.08,
+            "feet_air_time_variance": -0.2,
+            "feet_contact_without_cmd": 0.2,
+            "feet_slide": -0.12,
+            "feet_gait": 0.20,
+            "arm_joint_pos_tracking_l2": 0.0,
+            "arm_joint_vel_l2": 0.0,
+            "arm_joint_acc_l2": 0.0,
+            "arm_joint_torques_l2": 0.0,
+            "arm_action_rate_l2": 0.0,
+            "arm_joint_pos_limits": 0.0,
+            "arm_joint_deviation_l2": 0.0,
+            "arm_motion_tilt_penalty": -0.30,
+            "arm_action_in_unstable_base": 0.0,
+            "arm_stable_track_bonus": 0.0,
+        }
+
+        self.curriculum.reward_weights = None
+        for attr_name, weight in dog_only_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
 class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
     # Reward weight curriculum settings
     reward_curriculum_iterations: int = 64  # Roughly ~2k PPO updates with the current env-step based schedule

@@ -109,6 +109,40 @@ def delayed_last_action(env: ManagerBasedEnv, delay_steps: int = 1) -> torch.Ten
     return _delay_signal(env, "last_action", value, delay_steps)
 
 
+def last_action_with_padding(env: ManagerBasedEnv, total_action_dim: int, pad_value: float = 0.0) -> torch.Tensor:
+    """Return the last action padded with constants to a requested width."""
+    value = core_mdp.last_action(env)
+    if value.shape[-1] >= total_action_dim:
+        return value[:, :total_action_dim]
+    pad = torch.full(
+        (value.shape[0], total_action_dim - value.shape[-1]),
+        fill_value=pad_value,
+        device=value.device,
+        dtype=value.dtype,
+    )
+    return torch.cat([value, pad], dim=-1)
+
+
+def delayed_last_action_with_padding(
+    env: ManagerBasedEnv, total_action_dim: int, pad_value: float = 0.0, delay_steps: int = 1
+) -> torch.Tensor:
+    value = delayed_last_action(env, delay_steps=delay_steps)
+    if value.shape[-1] >= total_action_dim:
+        return value[:, :total_action_dim]
+    pad = torch.full(
+        (value.shape[0], total_action_dim - value.shape[-1]),
+        fill_value=pad_value,
+        device=value.device,
+        dtype=value.dtype,
+    )
+    return torch.cat([value, pad], dim=-1)
+
+
+def constant_observation(env: ManagerBasedEnv, dim: int = 1, value: float = 0.0) -> torch.Tensor:
+    """Return a constant observation tensor."""
+    return torch.full((env.num_envs, dim), float(value), device=env.device, dtype=torch.float32)
+
+
 def phase(env: ManagerBasedRLEnv, cycle_time: float) -> torch.Tensor:
     if not hasattr(env, "episode_length_buf") or env.episode_length_buf is None:
         env.episode_length_buf = torch.zeros(env.num_envs, device=env.device, dtype=torch.long)
