@@ -28,6 +28,12 @@ parser.add_argument(
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
 )
+parser.add_argument(
+    "--live",
+    action="store_true",
+    default=False,
+    help="Continuously step zero actions. By default, keep the scene paused for interactive inspection.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli = parser.parse_args()
 
@@ -50,6 +56,10 @@ import robot_lab.tasks  # noqa: F401
 from isaaclab_tasks.utils import parse_env_cfg
 
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+
+
 def main():
     env_cfg = parse_env_cfg(
         args_cli.task,
@@ -57,19 +67,30 @@ def main():
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
+    # This viewer is for manual inspection only, so skip descriptor export and
+    # keep a stable local log path for any simulator-side artifacts.
+    env_cfg.export_io_descriptors = False
+    env_cfg.log_dir = os.path.join(ROOT_DIR, "logs", "tools", "view_ground_pick")
     env = gym.make(args_cli.task, cfg=env_cfg)
 
     print(f"[INFO] Viewing task: {args_cli.task}")
     print(f"[INFO] Low-level policy: {os.environ['GO2_X5_LOW_LEVEL_POLICY_PATH']}")
     print(f"[INFO] Observation space: {env.observation_space}")
     print(f"[INFO] Action space: {env.action_space}")
+    if args_cli.live:
+        print("[INFO] Live stepping enabled: the scene will keep advancing with zero actions.")
+    else:
+        print("[INFO] Interactive preview mode: physics stays paused so you can orbit, select, and inspect the scene.")
 
     env.reset()
     try:
         while simulation_app.is_running():
-            with torch.inference_mode():
-                actions = torch.zeros(env.action_space.shape, device=env.unwrapped.device)
-                env.step(actions)
+            if args_cli.live:
+                with torch.inference_mode():
+                    actions = torch.zeros(env.action_space.shape, device=env.unwrapped.device)
+                    env.step(actions)
+            else:
+                env.unwrapped.sim.render()
     finally:
         env.close()
 

@@ -44,4 +44,5 @@ exec "${ISAACLAB_ROOT}/isaaclab.sh" \
   --device cuda:0 \
   --num_envs 1 \
   --enable_cameras \
+  --rendering_mode quality \
   "$@"

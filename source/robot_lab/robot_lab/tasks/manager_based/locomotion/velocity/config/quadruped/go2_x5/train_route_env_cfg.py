@@ -790,10 +790,18 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
 
         # Preserve the historical 18-d action observation layout by padding the leg actions
         # with six zeros for the arm slots. This lets us reuse most of the old first-layer weights.
-        self.observations.policy.actions.func = mdp.last_action_with_padding
-        self.observations.policy.actions.params = {"total_action_dim": len(self.joint_names), "pad_value": 0.0}
-        self.observations.critic.actions.func = mdp.last_action_with_padding
-        self.observations.critic.actions.params = {"total_action_dim": len(self.joint_names), "pad_value": 0.0}
+        self.observations.policy.actions = ObsTerm(
+            func=mdp.last_action_with_padding,
+            params={"total_action_dim": len(self.joint_names), "pad_value": 0.0},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        self.observations.critic.actions = ObsTerm(
+            func=mdp.last_action_with_padding,
+            params={"total_action_dim": len(self.joint_names), "pad_value": 0.0},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
 
         # Expose a placeholder gripper scalar in the observation interface. The locomotion route
         # does not actuate the gripper yet, but keeping the channel visible reserves the API.

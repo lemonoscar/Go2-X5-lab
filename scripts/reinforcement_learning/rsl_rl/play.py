@@ -1,15 +1,3 @@
-# Copyright (c) 2024-2025 Ziqi Fan
-# SPDX-License-Identifier: Apache-2.0
-
-# Copyright (c) 2024-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-#
-# SPDX-License-Identifier: Apache-2.0
-
-"""Script to play a checkpoint if an RL agent from RSL-RL."""
-
-"""Launch Isaac Sim Simulator first."""
-
 import argparse
 import os
 import sys
@@ -124,6 +112,12 @@ parser.add_argument(
     type=float,
     default=5.0,
     help="Seconds to command the default arm pose between consecutive poses in arm_cmd_pose_sequence mode.",
+)
+parser.add_argument(
+    "--arm_cmd_force_action",
+    action="store_true",
+    default=False,
+    help="Force arm action dimensions to match the commanded arm pose exactly instead of letting whole-body RL respond.",
 )
 parser.add_argument(
     "--arm_cmd_schedule",
@@ -280,9 +274,14 @@ def _disable_play_randomization(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg |
             if env_cfg.observations.policy.joint_vel.params is not None:
                 env_cfg.observations.policy.joint_vel.params.pop("delay_steps", None)
         if env_cfg.observations.policy.actions is not None:
-            env_cfg.observations.policy.actions.func = locomotion_mdp.last_action
-            if env_cfg.observations.policy.actions.params is not None:
-                env_cfg.observations.policy.actions.params.pop("delay_steps", None)
+            action_obs_params = env_cfg.observations.policy.actions.params
+            if action_obs_params is not None and "total_action_dim" in action_obs_params:
+                env_cfg.observations.policy.actions.func = locomotion_mdp.last_action_with_padding
+                action_obs_params.pop("delay_steps", None)
+            else:
+                env_cfg.observations.policy.actions.func = locomotion_mdp.last_action
+                if action_obs_params is not None:
+                    action_obs_params.pop("delay_steps", None)
         if env_cfg.observations.policy.velocity_commands is not None:
             env_cfg.observations.policy.velocity_commands.func = locomotion_mdp.generated_commands
             if env_cfg.observations.policy.velocity_commands.params is None:
@@ -506,11 +505,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     base_cmd_term = None
     fixed_base_cmd = None
     default_pose_set_raw = [
-        [0.51, 2.13, 1.02, 0.09, 0.17, 0.17],
-        [-0.51, 2.13, 1.02, 0.09, 0.17, 0.17],
-        [0.77, 1.36, 1.36, -0.09, 0.0, 1.02],
-        [1.53, 2.21, 2.55, -0.09, 0.0, 0.09],
-        [0.0, 2.21, 2.21, -0.09, -0.09, 0.09],
+        [-1.66, 2.20, 1.83, 0.09, 0.17, 0.17],
+        [-1.66, 2.20, 1.83, 0.09, 0.17, 0.17],
+        [0, 1.48, 1.83, 0, 1.57, 0],
+        [1.53, 2.7, 2.55, -0.09, 0.0, 0.09],
+        [0.0, 2.7, 2.21, -0.09, -0.09, 0.09],
     ]
 
     def resolve_arm_action_map(current_arm_term):
@@ -776,7 +775,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 obs = env.get_observations()
                 # agent stepping
                 actions = policy(obs)
-                if desired_arm_pos is not None and arm_action_map is not None:
+                if args_cli.arm_cmd_force_action and desired_arm_pos is not None and arm_action_map is not None:
                     idx = arm_action_map["indices"]
                     scale = arm_action_map["scale"]
                     offset = arm_action_map["offset"]
