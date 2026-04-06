@@ -15,8 +15,13 @@
 - `Go2` 平地与粗糙地形速度跟踪训练 / 回放
 - `Go2-X5` 平地与粗糙地形 locomotion 训练 / 回放
 - `Go2-X5` foundation / robust 训练路线
+- `Go2-X5` dog-only PPO 低层策略路线
 - Isaac Lab 中面向 sim2sim 的延迟、噪声与动力学扰动建模
 - Go2 / Go2-X5 资产的 URDF / MJCF 转 USD 工作流
+
+当前低层策略范式说明见：
+
+- [newPPO.md](/home/lemon/Issac/Go2-X5-lab/newPPO.md)
 
 ## 快速开始
 
@@ -79,6 +84,7 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 | Go2-X5 | `RobotLab-Isaac-Velocity-Rough-Go2-X5-v0` | 粗糙地形 locomotion + arm 形态配置 |
 | Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0` | foundation flat 路线，保留 arm 维度但固定默认位姿 |
 | Go2-X5 | `RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0` | P2a rough transfer 路线，保留 arm 维度但继续锁在默认位姿 |
+| Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnly-v0` | dog-only 低层策略，PPO 只输出 12 维腿动作，arm 走独立命令 |
 
 相关环境注册入口位于：
 
@@ -108,6 +114,46 @@ python scripts/reinforcement_learning/rsl_rl/play.py \
 - `cusrl/train.py` / `cusrl/play.py`：CusRL 工作流入口
 - `migrate_go2_x5_route_checkpoint.py`：把旧的 12-action route checkpoint 迁移到新的 arm-aware route 架构
 - `convert_urdf.py` / `convert_mjcf.py`：机器人描述文件转换为 USD
+
+## 当前 PPO 范式
+
+当前 `Go2-X5` 的主低层策略设计已经从 “whole-body 18 维 joint policy” 切换到结构化的 `DogOnly PPO` 范式。
+
+核心原则是：
+
+- PPO 只输出 `12` 维腿动作
+- 机械臂 `6` 维目标由 `arm_joint_pos` 命令独立驱动
+- `gripper` 作为上层任务接口显式保留，但当前仍是占位通道
+- 低层 PPO 的职责是底盘稳定、步态生成和 arm 扰动下的 base 补偿
+
+当前实际网络结构：
+
+- actor 输入：`260`
+- critic 输入：`260`
+- actor 输出：`12`
+- hidden dims：`[512, 256, 128]`
+- activation：`ELU`
+
+输入中的 `260` 维不是纯命令，而是：
+
+- 机器人当前状态
+- 加上高层任务命令
+
+逻辑上可以理解为：
+
+```text
+policy_input = robot_state_obs + task_command_obs
+```
+
+其中高层命令接口对应：
+
+- `cmd_vel`: `3`
+- `arm_pose`: `6`
+- `gripper`: `1`
+
+更完整的设计说明、封装边界以及面向 `UMI VLA` 的低层策略范式见：
+
+- [newPPO.md](/home/lemon/Issac/Go2-X5-lab/newPPO.md)
 
 ## 训练与回放示例
 
