@@ -4,8 +4,24 @@ Go2-X5 键盘控制测试 (最简版本)
 """
 
 import argparse
+import os
 from pathlib import Path
 import sys
+
+# ============ 在导入其他模块之前设置 policy 路径 ============
+policy_paths = [
+    "/home/lemon/Issac/Go2-X5-lab/logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt",
+    str(Path(__file__).parent.parent / "logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt"),
+]
+
+for p in policy_paths:
+    if os.path.exists(p):
+        os.environ["GO2_X5_LOW_LEVEL_POLICY_PATH"] = p
+        print(f"[找到 Policy] {p}")
+        break
+else:
+    print("[警告] 未找到 dog-only policy!")
+# ====================================================================
 
 # Add robot_lab to path
 script_dir = Path(__file__).parent.absolute()
@@ -40,10 +56,9 @@ def main():
     print("  Go2-X5 键盘控制测试")
     print("=" * 60)
 
-    # 自动查找 dog-only policy
+    # 自动查找并直接设置 policy 路径
     import os
     policy_paths = [
-        "/home/lemon/Issac/Go2-X5-lab/logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt",
         "/home/lemon/Issac/Go2-X5-lab/logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt",
         str(Path(__file__).parent.parent / "logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt"),
     ]
@@ -54,12 +69,6 @@ def main():
             policy_path = p
             break
 
-    if policy_path:
-        os.environ["GO2_X5_LOW_LEVEL_POLICY_PATH"] = policy_path
-        print(f"[自动设置] Policy: {policy_path}")
-    else:
-        print("[警告] 未找到 dog-only policy，底座控制可能不正常")
-
     # Create scene config
     scene_cfg = Go2X5GroundPickSceneCfg(num_envs=1, env_spacing=4.0)
 
@@ -68,6 +77,18 @@ def main():
     env_cfg.scene.num_envs = 1
     env_cfg.observations.policy.enable_corruption = False
     env_cfg.terminations.time_out = None
+
+    # 设置 log 目录 (必需)
+    from pathlib import Path
+    import tempfile
+    env_cfg.log_dir = Path(tempfile.gettempdir()) / "isaac_lab_logs"
+
+    # 直接覆盖 policy 路径 (关键修复!)
+    if policy_path:
+        env_cfg.actions.base_policy.policy_path = policy_path
+        print(f"[设置 Policy] {policy_path}")
+    else:
+        print("[警告] 未找到 dog-only policy，底座控制可能不正常")
 
     print("[1/5] 创建环境...")
     env = ManagerBasedRLEnv(cfg=env_cfg)
