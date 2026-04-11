@@ -38,6 +38,19 @@ from robot_lab.tasks.manager_based.manipulation.ground_pick.go2_x5_ground_pick_e
 
 
 def main():
+    # 自动查找 dog-only policy
+    import os
+    policy_paths = [
+        "/home/lemon/Issac/Go2-X5-lab/logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt",
+        str(Path(__file__).parent.parent / "logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt"),
+    ]
+
+    for p in policy_paths:
+        if os.path.exists(p):
+            os.environ["GO2_X5_LOW_LEVEL_POLICY_PATH"] = p
+            print(f"[自动设置] Policy: {p}")
+            break
+
     # Create environment config
     env_cfg = Go2X5GroundPickEnvCfg_PLAY()
     env_cfg.scene.num_envs = 1
