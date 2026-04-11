@@ -505,11 +505,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     base_cmd_term = None
     fixed_base_cmd = None
     default_pose_set_raw = [
-        [-1.66, 2.20, 1.83, 0.09, 0.17, 0.17],
-        [-1.66, 2.20, 1.83, 0.09, 0.17, 0.17],
-        [0, 1.48, 1.83, 0, 1.57, 0],
-        [1.53, 2.7, 2.55, -0.09, 0.0, 0.09],
-        [0.0, 2.7, 2.21, -0.09, -0.09, 0.09],
+        [0, 1.57, 1.27, 0, 0, 0],
+        [1.0, 0, 0 ,0 ,0 ,0]
     ]
 
     def resolve_arm_action_map(current_arm_term):

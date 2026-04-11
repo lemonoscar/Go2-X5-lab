@@ -27,14 +27,20 @@ try:
     from isaaclab.devices import Se2Keyboard, Se2KeyboardCfg
     from isaaclab.sensors import Camera
     from isaaclab.utils import convert_dict_to_backend
-except ImportError:
-    print("Isaac Lab not found")
+except ImportError as e:
+    print(f"Isaac Lab import failed: {e}")
+    print("Make sure you've activated the Isaac Lab conda environment:")
+    print("  conda activate env_isaaclab")
     exit(1)
 
 # Add robot_lab to path
 import sys
-robot_lab_path = Path(__file__).parent.parent / "source" / "robot_lab"
-sys.path.insert(0, str(robot_lab_path))
+script_dir = Path(__file__).parent.absolute()
+robot_lab_path = script_dir.parent / "source" / "robot_lab"
+if robot_lab_path.exists():
+    sys.path.insert(0, str(robot_lab_path))
+else:
+    print(f"Warning: robot_lab path not found at {robot_lab_path}")
 
 
 def main():
