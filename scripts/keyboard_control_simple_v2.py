@@ -41,7 +41,8 @@ simulation_app = app_launcher.app
 import torch
 import numpy as np
 from isaaclab.devices import Se2Keyboard, Se2KeyboardCfg
-from isaaclab.sim import SimulationContext, spawn_scene
+from isaaclab.sim import SimulationContext
+from isaaclab.utils import spawn_scene
 from isaaclab.assets import Articulation
 
 # 导入配置 - 直接导入不触发 __init__.py 的扫描
