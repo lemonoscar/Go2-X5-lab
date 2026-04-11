@@ -19,6 +19,6 @@ from isaaclab_tasks.utils import import_packages
 
 
 # The blacklist is used to prevent importing configs from sub-packages
-_BLACKLIST_PKGS = ["utils"]
+_BLACKLIST_PKGS = ["utils", "vla_sft"]  # vla_sft 有版本兼容问题，暂时跳过
 # Import all configs in this package
 import_packages(__name__, _BLACKLIST_PKGS)
