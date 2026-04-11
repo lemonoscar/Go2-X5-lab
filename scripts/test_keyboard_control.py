@@ -84,6 +84,9 @@ def main():
     # 设置 log 目录 (必需)
     env_cfg.log_dir = Path(tempfile.gettempdir()) / "isaac_lab_logs"
 
+    # 禁用 IO descriptor 导出 (避免 PyYAML 错误)
+    env_cfg.export_export_instruction_to_disk = False
+
     # 直接覆盖 policy 路径 (关键修复!)
     if policy_path:
         env_cfg.actions.base_policy.policy_path = policy_path
