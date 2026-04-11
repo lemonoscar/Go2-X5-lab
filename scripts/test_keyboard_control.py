@@ -52,12 +52,15 @@ from robot_lab.tasks.manager_based.manipulation.ground_pick.go2_x5_ground_pick_e
 
 
 def main():
+    from pathlib import Path
+    import os
+    import tempfile
+
     print("=" * 60)
     print("  Go2-X5 键盘控制测试")
     print("=" * 60)
 
     # 自动查找并直接设置 policy 路径
-    import os
     policy_paths = [
         "/home/lemon/Issac/Go2-X5-lab/logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt",
         str(Path(__file__).parent.parent / "logs/rsl_rl/go2_x5_dog_only_flat/2026-04-01_03-51-52/exported/policy.pt"),
@@ -79,8 +82,6 @@ def main():
     env_cfg.terminations.time_out = None
 
     # 设置 log 目录 (必需)
-    from pathlib import Path
-    import tempfile
     env_cfg.log_dir = Path(tempfile.gettempdir()) / "isaac_lab_logs"
 
     # 直接覆盖 policy 路径 (关键修复!)
