@@ -5,6 +5,8 @@
 Reference: https://github.com/unitreerobotics/unitree_ros
 """
 
+import os
+
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg
 from isaaclab.assets.articulation import ArticulationCfg
@@ -15,29 +17,46 @@ from robot_lab.assets import ISAACLAB_ASSETS_DATA_DIR
 # Configuration
 ##
 
-GO2_X5_CFG = ArticulationCfg(
-    spawn=sim_utils.UrdfFileCfg(
+GO2_X5_URDF_PATH = f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/go2_x5/go2_x5.urdf"
+GO2_X5_USD_PATH = f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/go2_x5/go2_x5.usd"
+
+_GO2_X5_RIGID_PROPS = sim_utils.RigidBodyPropertiesCfg(
+    disable_gravity=False,
+    retain_accelerations=False,
+    linear_damping=0.0,
+    angular_damping=0.0,
+    max_linear_velocity=1000.0,
+    max_angular_velocity=1000.0,
+    max_depenetration_velocity=1.0,
+)
+
+_GO2_X5_ARTICULATION_PROPS = sim_utils.ArticulationRootPropertiesCfg(
+    enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=0
+)
+
+if os.path.exists(GO2_X5_USD_PATH):
+    _GO2_X5_SPAWN_CFG = sim_utils.UsdFileCfg(
+        usd_path=GO2_X5_USD_PATH,
+        activate_contact_sensors=True,
+        rigid_props=_GO2_X5_RIGID_PROPS,
+        articulation_props=_GO2_X5_ARTICULATION_PROPS,
+    )
+else:
+    _GO2_X5_SPAWN_CFG = sim_utils.UrdfFileCfg(
         fix_base=False,
         merge_fixed_joints=True,
         replace_cylinders_with_capsules=False,
-        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/go2_x5/go2_x5.urdf",
+        asset_path=GO2_X5_URDF_PATH,
         activate_contact_sensors=True,
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            retain_accelerations=False,
-            linear_damping=0.0,
-            angular_damping=0.0,
-            max_linear_velocity=1000.0,
-            max_angular_velocity=1000.0,
-            max_depenetration_velocity=1.0,
-        ),
-        articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-            enabled_self_collisions=False, solver_position_iteration_count=4, solver_velocity_iteration_count=0
-        ),
+        rigid_props=_GO2_X5_RIGID_PROPS,
+        articulation_props=_GO2_X5_ARTICULATION_PROPS,
         joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
             gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
         ),
-    ),
+    )
+
+GO2_X5_CFG = ArticulationCfg(
+    spawn=_GO2_X5_SPAWN_CFG,
     init_state=ArticulationCfg.InitialStateCfg(
         pos=(0.0, 0.0, 0.30),
         joint_pos={
