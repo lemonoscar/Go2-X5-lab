@@ -797,6 +797,18 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             preserve_order=True,
         )
 
+        # Keep dog-only on the same flat-plane locomotion distribution used by UMI.
+        # This task still carries arm-state observations, but the locomotion command
+        # content itself should match UMI's local_2d_vel setup.
+        self.scene.terrain.terrain_type = "plane"
+        self.scene.terrain.terrain_generator = None
+        self.curriculum.terrain_levels = None
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.resampling_time_range = (4.0, 4.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.5, 1.5)
+
         # Preserve the historical 18-d action observation layout by padding the leg actions
         # with six zeros for the arm slots. This lets us reuse most of the old first-layer weights.
         self.observations.policy.actions = ObsTerm(
@@ -852,11 +864,13 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             "joint_power": -1.0e-5,
             "stand_still": -2.5,
             "joint_pos_penalty": -0.60,
-            "action_rate_l2": -0.01,
+            # UMI sweeps action-rate aggressively for real-world safety. Use the
+            # locomotion-side default instead of the milder project-specific weight.
+            "action_rate_l2": -0.02,
             "undesired_contacts": -1.0,
             "contact_forces": -1.0e-4,
-            "track_lin_vel_xy_exp": 4.5,
-            "track_ang_vel_z_exp": 2.2,
+            "track_lin_vel_xy_exp": 4.0,
+            "track_ang_vel_z_exp": 2.0,
             "feet_air_time": 1.0,
             "feet_air_time_variance": 0.0,
             "feet_contact_without_cmd": 0.0,
@@ -894,6 +908,16 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
         self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.5, 1.5)
         self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.5, 1.5)
         self.events.randomize_actuator_gains.params["distribution"] = "uniform"
+        self.events.randomize_push_robot = None
+
+        # The route-stage base config already runs at dt=0.0025 with decimation=8,
+        # i.e. a 20 ms control period (50 Hz), which matches UMI. Here we align the
+        # timing uncertainty to a fixed one-step motor latency plus occasional held
+        # actions, instead of the wider flat-task randomization used elsewhere.
+        self.sim2sim_action_delay_range = (1, 1)
+        self.sim2sim_action_hold_prob = 0.05
+        self.sim2sim_action_noise_std = 0.0
+        self.sim2sim_obs_delay_steps = 0
 
         self.disable_zero_weight_rewards()
 
