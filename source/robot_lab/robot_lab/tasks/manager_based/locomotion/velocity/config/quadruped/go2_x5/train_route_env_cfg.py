@@ -205,6 +205,15 @@ class _Go2X5LeggedBaseEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_slide.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_height.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
+        self.rewards.feet_drag = RewTerm(
+            func=mdp.feet_drag_penalty,
+            weight=0.0,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", body_names=[self.foot_link_name]),
+                "penalty_feet_drag_height": 0.10,
+                "feet_drag_sigma": 0.05,
+            },
+        )
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("FL_foot", "RR_foot"), ("FR_foot", "RL_foot"))
 
         base_body_cfg = SceneEntityCfg("robot", body_names=[self.base_link_name])
@@ -775,7 +784,7 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
         # Keep full robot state and task commands in observations, but remove arm joints
         # from the learned action head.
         self.actions.joint_pos.scale = {
-            ".*_hip_joint": 0.125,
+            ".*_hip_joint": 0.25,
             ".*_thigh_joint": 0.25,
             ".*_calf_joint": 0.25,
         }
@@ -818,6 +827,17 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             scale=1.0,
         )
 
+        if self.rewards.feet_drag is None:
+            self.rewards.feet_drag = RewTerm(
+                func=mdp.feet_drag_penalty,
+                weight=0.0,
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=[self.foot_link_name]),
+                    "penalty_feet_drag_height": 0.10,
+                    "feet_drag_sigma": 0.05,
+                },
+            )
+
         # Arm tracking is handled by the dedicated arm command follower, not by PPO actions.
         # Keep only the coupling/stability terms that the base can meaningfully influence.
         dog_only_weights = {
@@ -837,11 +857,12 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             "contact_forces": -1.0e-4,
             "track_lin_vel_xy_exp": 4.5,
             "track_ang_vel_z_exp": 2.2,
-            "feet_air_time": 0.16,
-            "feet_air_time_variance": -0.10,
-            "feet_contact_without_cmd": 0.25,
-            "feet_slide": -0.24,
-            "feet_height_body": -4.5,
+            "feet_air_time": 1.0,
+            "feet_air_time_variance": 0.0,
+            "feet_contact_without_cmd": 0.0,
+            "feet_slide": 0.0,
+            "feet_drag": -0.01,
+            "feet_height_body": 0.0,
             "feet_gait": 0.38,
             "arm_joint_pos_tracking_l2": 0.0,
             "arm_joint_vel_l2": 0.0,
@@ -865,10 +886,14 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             if reward_term is not None:
                 reward_term.weight = weight
 
-        self.rewards.base_height_l2.params["target_height"] = 0.33
-        self.rewards.feet_air_time.params["threshold"] = 0.35
-        self.rewards.feet_height_body.params["target_height"] = -0.16
+        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.feet_air_time.params["threshold"] = 0.50
+        self.rewards.feet_height_body.params["target_height"] = -0.20
         self.rewards.upward.weight = 1.0
+        self.events.randomize_actuator_gains.mode = "reset"
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.5, 1.5)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.5, 1.5)
+        self.events.randomize_actuator_gains.params["distribution"] = "uniform"
 
         self.disable_zero_weight_rewards()
 

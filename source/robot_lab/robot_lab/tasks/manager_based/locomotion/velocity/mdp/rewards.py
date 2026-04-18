@@ -583,6 +583,29 @@ def feet_slide(
     return reward
 
 
+def feet_drag_penalty(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    penalty_feet_drag_height: float,
+    feet_drag_sigma: float,
+) -> torch.Tensor:
+    """Penalize low-clearance feet that keep moving in the plane.
+
+    This mirrors the UMI-on-Legs feet-drag penalty and replaces the need to aggressively
+    hard-code a high body-frame swing-foot target.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    feet_height_diff = torch.clamp(
+        asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - penalty_feet_drag_height,
+        max=0.0,
+    )
+    feet_planar_speed = torch.sum(torch.square(asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2]), dim=2)
+    penalty_height_scale = -(torch.exp(feet_height_diff / feet_drag_sigma) - 1.0)
+    reward = torch.sum(penalty_height_scale * feet_planar_speed, dim=1)
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
 # def smoothness_1(env: ManagerBasedRLEnv) -> torch.Tensor:
 #     # Penalize changes in actions
 #     diff = torch.square(env.action_manager.action - env.action_manager.prev_action)
