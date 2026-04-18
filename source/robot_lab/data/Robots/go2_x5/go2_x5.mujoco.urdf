@@ -26,6 +26,13 @@
       <mass value="0.001" />
       <inertia ixx="9.6e-06" ixy="0" ixz="0" iyy="9.6e-06" iyz="0" izz="9.6e-06" />
     </inertial>
+    <visual name="Head_upper_visual_01">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <cylinder radius="0.05" length="0.09" />
+      </geometry>
+      <material name="head_upper_visual"><color rgba="0.15 0.15 0.15 1.0" /></material>
+    </visual>
     <collision name="Head_upper_collision_01">
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
@@ -45,6 +52,13 @@
       <mass value="0.001" />
       <inertia ixx="9.6e-06" ixy="0" ixz="0" iyy="9.6e-06" iyz="0" izz="9.6e-06" />
     </inertial>
+    <visual name="Head_lower_visual_01">
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <sphere radius="0.047" />
+      </geometry>
+      <material name="head_lower_visual"><color rgba="0.10 0.10 0.10 1.0" /></material>
+    </visual>
     <collision name="Head_lower_collision_01">
       <origin xyz="0 0 0" rpy="0 0 0" />
       <geometry>
