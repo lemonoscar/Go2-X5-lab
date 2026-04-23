@@ -1,0 +1,79 @@
+{
+  "generated_at": "2026-04-12T15:02:25.973704+00:00",
+  "source_manifest": "Materials/manifests/vla_render_asset_manifest.json",
+  "floor_materials": {
+    "concrete": [
+      {
+        "asset_id": "Concrete046",
+        "asset_dir": "Materials/Floors/concrete/Concrete046",
+        "color_texture": "Materials/Floors/concrete/Concrete046/Concrete046_2K-JPG_Color.jpg",
+        "roughness_texture": "Materials/Floors/concrete/Concrete046/Concrete046_2K-JPG_Roughness.jpg",
+        "normal_texture": "Materials/Floors/concrete/Concrete046/Concrete046_2K-JPG_NormalDX.jpg",
+        "metallic_texture": null,
+        "ao_texture": null,
+        "orm_texture": null,
+        "texture_scale": [
+          0.22,
+          0.22
+        ],
+        "bump_factor": 0.9,
+        "ao_to_diffuse": 0.25
+      }
+    ],
+    "wood": [
+      {
+        "asset_id": "WoodFloor045",
+        "asset_dir": "Materials/Floors/wood/WoodFloor045",
+        "color_texture": "Materials/Floors/wood/WoodFloor045/WoodFloor045_2K-JPG_Color.jpg",
+        "roughness_texture": "Materials/Floors/wood/WoodFloor045/WoodFloor045_2K-JPG_Roughness.jpg",
+        "normal_texture": "Materials/Floors/wood/WoodFloor045/WoodFloor045_2K-JPG_NormalDX.jpg",
+        "metallic_texture": null,
+        "ao_texture": null,
+        "orm_texture": null,
+        "texture_scale": [
+          0.18,
+          0.18
+        ],
+        "bump_factor": 0.8,
+        "ao_to_diffuse": 0.2
+      }
+    ],
+    "tile": [
+      {
+        "asset_id": "Tiles019",
+        "asset_dir": "Materials/Floors/tile/Tiles019",
+        "color_texture": "Materials/Floors/tile/Tiles019/Tiles019_2K-JPG_Color.jpg",
+        "roughness_texture": "Materials/Floors/tile/Tiles019/Tiles019_2K-JPG_Roughness.jpg",
+        "normal_texture": "Materials/Floors/tile/Tiles019/Tiles019_2K-JPG_NormalDX.jpg",
+        "metallic_texture": null,
+        "ao_texture": "Materials/Floors/tile/Tiles019/Tiles019_2K-JPG_AmbientOcclusion.jpg",
+        "orm_texture": null,
+        "texture_scale": [
+          0.26,
+          0.26
+        ],
+        "bump_factor": 0.7,
+        "ao_to_diffuse": 0.2
+      }
+    ],
+    "grass": [
+      {
+        "asset_id": "Grass001",
+        "asset_dir": "Materials/Floors/grass/Grass001",
+        "color_texture": "Materials/Floors/grass/Grass001/Grass001_2K-JPG_Color.jpg",
+        "roughness_texture": "Materials/Floors/grass/Grass001/Grass001_2K-JPG_Roughness.jpg",
+        "normal_texture": "Materials/Floors/grass/Grass001/Grass001_2K-JPG_NormalDX.jpg",
+        "metallic_texture": null,
+        "ao_texture": "Materials/Floors/grass/Grass001/Grass001_2K-JPG_AmbientOcclusion.jpg",
+        "orm_texture": null,
+        "texture_scale": [
+          0.11,
+          0.11
+        ],
+        "bump_factor": 0.65,
+        "ao_to_diffuse": 0.15
+      }
+    ]
+  },
+  "hdri_profiles": {}
+}

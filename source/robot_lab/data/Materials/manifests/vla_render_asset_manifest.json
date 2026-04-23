@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "provider": {
+    "name": "ambientCG",
+    "api_url": "https://ambientcg.com/api/v2/full_json",
+    "license": "CC0"
+  },
+  "floor_materials": {
+    "concrete": [
+      {
+        "asset_id": "Concrete046",
+        "download_attribute": "2K-JPG",
+        "texture_scale": [0.22, 0.22],
+        "bump_factor": 0.9,
+        "ao_to_diffuse": 0.25,
+        "notes": "Smooth gray concrete for grasp scenes."
+      }
+    ],
+    "wood": [
+      {
+        "asset_id": "WoodFloor045",
+        "download_attribute": "2K-JPG",
+        "texture_scale": [0.18, 0.18],
+        "bump_factor": 0.8,
+        "ao_to_diffuse": 0.2,
+        "notes": "Distinct plank pattern with warm wood grain."
+      }
+    ],
+    "tile": [
+      {
+        "asset_id": "Tiles019",
+        "download_attribute": "2K-JPG",
+        "texture_scale": [0.26, 0.26],
+        "bump_factor": 0.7,
+        "ao_to_diffuse": 0.2,
+        "notes": "Small ceramic tiles with visible grout lines."
+      }
+    ],
+    "grass": [
+      {
+        "asset_id": "Grass001",
+        "download_attribute": "2K-JPG",
+        "texture_scale": [0.11, 0.11],
+        "bump_factor": 0.65,
+        "ao_to_diffuse": 0.15,
+        "notes": "Short grass for visual-only outdoor variation."
+      }
+    ]
+  }
+}

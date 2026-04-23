@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import yaml
 
 from isaaclab.app import AppLauncher
 
@@ -31,6 +32,12 @@ parser.add_argument(
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--keyboard", action="store_true", default=False, help="Whether to use keyboard.")
+parser.add_argument(
+    "--deterministic_playback",
+    action="store_true",
+    default=False,
+    help="Disable training-time randomization for cleaner demos instead of matching the train-time task distribution.",
+)
 parser.add_argument(
     "--base_cmd",
     type=float,
@@ -191,7 +198,9 @@ import robot_lab.tasks  # noqa: F401
 import robot_lab.tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
 
 
-def _disable_play_randomization(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg):
+def _disable_play_randomization(
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, preserve_sim2sim: bool = False
+):
     """Freeze play-time stochasticity so playback reflects the learned policy instead of domain randomization."""
     env_cfg.observations.policy.enable_corruption = False
 
@@ -249,13 +258,13 @@ def _disable_play_randomization(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg |
             if hasattr(env_cfg.events, term_name):
                 setattr(env_cfg.events, term_name, None)
 
-    if hasattr(env_cfg, "sim2sim_action_delay_range"):
+    if not preserve_sim2sim and hasattr(env_cfg, "sim2sim_action_delay_range"):
         env_cfg.sim2sim_action_delay_range = (0, 0)
-    if hasattr(env_cfg, "sim2sim_action_hold_prob"):
+    if not preserve_sim2sim and hasattr(env_cfg, "sim2sim_action_hold_prob"):
         env_cfg.sim2sim_action_hold_prob = 0.0
-    if hasattr(env_cfg, "sim2sim_action_noise_std"):
+    if not preserve_sim2sim and hasattr(env_cfg, "sim2sim_action_noise_std"):
         env_cfg.sim2sim_action_noise_std = 0.0
-    if hasattr(env_cfg, "sim2sim_obs_delay_steps"):
+    if not preserve_sim2sim and hasattr(env_cfg, "sim2sim_obs_delay_steps"):
         env_cfg.sim2sim_obs_delay_steps = 0
         if env_cfg.observations.policy.base_ang_vel is not None:
             env_cfg.observations.policy.base_ang_vel.func = locomotion_mdp.base_ang_vel
@@ -296,6 +305,186 @@ def _disable_play_randomization(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg |
             env_cfg.observations.policy.arm_joint_command.params.pop("delay_steps", None)
 
 
+def _load_logged_env_snapshot(log_dir: str):
+    env_yaml_path = os.path.join(log_dir, "params", "env.yaml")
+    if not os.path.exists(env_yaml_path):
+        return None
+    with open(env_yaml_path, "r", encoding="utf-8") as f:
+        return yaml.unsafe_load(f)
+
+
+def _restore_cfg_attrs(target_obj, snapshot_cfg: dict | None, attr_names: tuple[str, ...]):
+    if target_obj is None or not snapshot_cfg:
+        return
+    for attr_name in attr_names:
+        if attr_name in snapshot_cfg and hasattr(target_obj, attr_name):
+            setattr(target_obj, attr_name, snapshot_cfg[attr_name])
+
+
+def _restore_term_params(target_term, snapshot_term_cfg: dict | None, param_names: tuple[str, ...]):
+    if target_term is None or not snapshot_term_cfg:
+        return
+    target_params = getattr(target_term, "params", None)
+    snapshot_params = snapshot_term_cfg.get("params")
+    if target_params is None or not snapshot_params:
+        return
+    for param_name in param_names:
+        if param_name in snapshot_params:
+            target_params[param_name] = snapshot_params[param_name]
+
+
+def _apply_logged_playback_overrides(env_cfg, logged_env_cfg: dict | None):
+    if not logged_env_cfg:
+        return
+
+    joint_action_cfg = logged_env_cfg.get("actions", {}).get("joint_pos", {})
+    current_joint_action = getattr(getattr(env_cfg, "actions", None), "joint_pos", None)
+    if current_joint_action is not None:
+        if "scale" in joint_action_cfg:
+            current_joint_action.scale = joint_action_cfg["scale"]
+        if "clip" in joint_action_cfg:
+            current_joint_action.clip = joint_action_cfg["clip"]
+        if "joint_names" in joint_action_cfg:
+            current_joint_action.joint_names = joint_action_cfg["joint_names"]
+
+    arm_action_cfg = logged_env_cfg.get("actions", {}).get("arm_joint_pos", {})
+    current_arm_action = getattr(getattr(env_cfg, "actions", None), "arm_joint_pos", None)
+    _restore_cfg_attrs(
+        current_arm_action,
+        arm_action_cfg,
+        ("clip", "joint_names", "command_name", "preserve_order"),
+    )
+
+    base_velocity_cfg = logged_env_cfg.get("commands", {}).get("base_velocity", {})
+    current_base_velocity = getattr(getattr(env_cfg, "commands", None), "base_velocity", None)
+    _restore_cfg_attrs(
+        current_base_velocity,
+        base_velocity_cfg,
+        (
+            "resampling_time_range",
+            "heading_command",
+            "heading_control_stiffness",
+            "rel_standing_envs",
+            "rel_heading_envs",
+        ),
+    )
+    if current_base_velocity is not None and "ranges" in base_velocity_cfg:
+        _restore_cfg_attrs(
+            current_base_velocity.ranges,
+            base_velocity_cfg["ranges"],
+            ("lin_vel_x", "lin_vel_y", "ang_vel_z", "heading"),
+        )
+
+    arm_command_cfg = logged_env_cfg.get("commands", {}).get("arm_joint_pos", {})
+    current_arm_command = getattr(getattr(env_cfg, "commands", None), "arm_joint_pos", None)
+    _restore_cfg_attrs(
+        current_arm_command,
+        arm_command_cfg,
+        (
+            "resampling_time_range",
+            "joint_names",
+            "preserve_order",
+            "position_range",
+            "use_default_offset",
+            "clip_to_joint_limits",
+        ),
+    )
+
+    logged_events = logged_env_cfg.get("events", {})
+    current_events = getattr(env_cfg, "events", None)
+    if current_events is not None:
+        for term_name in (
+            "randomize_rigid_body_material",
+            "randomize_rigid_body_mass_base",
+            "randomize_rigid_body_mass_others",
+            "randomize_com_positions",
+            "randomize_apply_external_force_torque",
+            "randomize_push_robot",
+            "push_robot",
+            "randomize_actuator_gains",
+            "randomize_reset_base",
+        ):
+            if term_name not in logged_events or not hasattr(current_events, term_name):
+                continue
+            logged_term_cfg = logged_events[term_name]
+            if logged_term_cfg is None:
+                setattr(current_events, term_name, None)
+                continue
+            current_term = getattr(current_events, term_name)
+            _restore_cfg_attrs(
+                current_term,
+                logged_term_cfg,
+                (
+                    "mode",
+                    "interval_range_s",
+                    "is_global_time",
+                    "min_step_count_between_reset",
+                ),
+            )
+            if term_name == "randomize_rigid_body_material":
+                _restore_term_params(
+                    current_term,
+                    logged_term_cfg,
+                    ("static_friction_range", "dynamic_friction_range", "restitution_range"),
+                )
+            elif term_name in ("randomize_rigid_body_mass_base", "randomize_rigid_body_mass_others"):
+                _restore_term_params(current_term, logged_term_cfg, ("mass_distribution_params", "operation"))
+            elif term_name == "randomize_com_positions":
+                _restore_term_params(current_term, logged_term_cfg, ("com_range",))
+            elif term_name == "randomize_apply_external_force_torque":
+                _restore_term_params(current_term, logged_term_cfg, ("force_range", "torque_range"))
+            elif term_name in ("randomize_push_robot", "push_robot"):
+                _restore_term_params(current_term, logged_term_cfg, ("velocity_range",))
+            elif term_name == "randomize_actuator_gains":
+                _restore_term_params(
+                    current_term,
+                    logged_term_cfg,
+                    ("stiffness_distribution_params", "damping_distribution_params", "distribution"),
+                )
+            elif term_name == "randomize_reset_base":
+                _restore_term_params(current_term, logged_term_cfg, ("pose_range", "velocity_range"))
+
+    logged_policy_obs = logged_env_cfg.get("observations", {}).get("policy", {})
+    current_policy_obs = getattr(getattr(env_cfg, "observations", None), "policy", None)
+    if current_policy_obs is not None:
+        for term_name in (
+            "base_ang_vel",
+            "projected_gravity",
+            "joint_pos",
+            "joint_vel",
+            "actions",
+            "velocity_commands",
+            "arm_joint_command",
+        ):
+            if term_name not in logged_policy_obs or not hasattr(current_policy_obs, term_name):
+                continue
+            logged_term_cfg = logged_policy_obs[term_name]
+            current_term = getattr(current_policy_obs, term_name)
+            if logged_term_cfg is None:
+                setattr(current_policy_obs, term_name, None)
+                continue
+            if current_term is None:
+                continue
+            _restore_cfg_attrs(current_term, logged_term_cfg, ("clip", "scale"))
+            if term_name in ("base_ang_vel", "projected_gravity"):
+                _restore_term_params(current_term, logged_term_cfg, ("delay_steps",))
+            elif term_name in ("joint_pos", "joint_vel"):
+                _restore_term_params(current_term, logged_term_cfg, ("delay_steps",))
+            elif term_name == "actions":
+                _restore_term_params(current_term, logged_term_cfg, ("delay_steps", "total_action_dim", "pad_value"))
+            elif term_name in ("velocity_commands", "arm_joint_command"):
+                _restore_term_params(current_term, logged_term_cfg, ("command_name", "delay_steps"))
+
+    for key in (
+        "sim2sim_action_delay_range",
+        "sim2sim_action_hold_prob",
+        "sim2sim_action_noise_std",
+        "sim2sim_obs_delay_steps",
+    ):
+        if key in logged_env_cfg and hasattr(env_cfg, key):
+            setattr(env_cfg, key, logged_env_cfg[key])
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RslRlBaseRunnerCfg):
     """Play with RSL-RL agent."""
@@ -304,19 +493,42 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # override configurations with non-hydra CLI arguments
     agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else 64
+    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
 
-    _disable_play_randomization(env_cfg)
+    # resolve checkpoint early so play can reuse the logged training config when available
+    if args_cli.use_pretrained_checkpoint:
+        if get_published_pretrained_checkpoint is None:
+            raise ModuleNotFoundError(
+                "The 'isaaclab.utils.pretrained_checkpoint' module is not available. "
+                "Please use --checkpoint instead of --use_pretrained_checkpoint."
+            )
+        resume_path = get_published_pretrained_checkpoint("rsl_rl", task_name)
+        if not resume_path:
+            print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
+            return
+    elif args_cli.checkpoint:
+        resume_path = retrieve_file_path(args_cli.checkpoint)
+    else:
+        log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+        log_root_path = os.path.abspath(log_root_path)
+        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+
+    log_dir = os.path.dirname(resume_path)
+    logged_env_cfg = _load_logged_env_snapshot(log_dir)
+    if logged_env_cfg is not None:
+        _apply_logged_playback_overrides(env_cfg, logged_env_cfg)
+        print(f"[INFO] Play restored training-time env overrides from: {os.path.join(log_dir, 'params', 'env.yaml')}")
+
+    if args_cli.deterministic_playback:
+        _disable_play_randomization(env_cfg, preserve_sim2sim=logged_env_cfg is not None)
     # avoid early episode termination during play/recording
     if getattr(env_cfg, "terminations", None) is not None:
         env_cfg.terminations.terrain_out_of_bounds = None
-        if args_cli.video:
-            env_cfg.terminations.time_out = None
 
     if args_cli.keyboard and args_cli.base_cmd is not None:
         raise ValueError("--base_cmd is not compatible with --keyboard.")
@@ -353,10 +565,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             f"ang_z={env_cfg.commands.base_velocity.ranges.ang_vel_z}, "
             f"stand={env_cfg.commands.base_velocity.rel_standing_envs:.2f}"
         )
-    print(
-        "[INFO] Play randomization disabled: observation corruption, material/mass/CoM DR, "
-        "reset velocity perturbations, pushes, actuator gain drift, and sim2sim delays."
-    )
+    if args_cli.deterministic_playback:
+        print(
+            "[INFO] Deterministic playback enabled: observation corruption, material/mass/CoM DR, "
+            "reset velocity perturbations, pushes, actuator gain drift, and sim2sim delays are disabled."
+        )
+    else:
+        print("[INFO] Play keeps the train-time task distribution unless you override commands via CLI.")
 
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
@@ -370,9 +585,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         controller = Se2Keyboard(config)
 
     if env_cfg.commands.arm_joint_pos is not None:
-        # increase arm motion amplitude for play (can be overridden via CLI)
-        env_cfg.commands.arm_joint_pos.position_range = (-1.5, 3.2)
-        env_cfg.commands.arm_joint_pos.resampling_time_range = (1.0, 2.0)
+        # Match the training task by default. Only override the arm command source when the
+        # user explicitly requests it via CLI.
         if args_cli.arm_cmd_pos_range is not None:
             env_cfg.commands.arm_joint_pos.position_range = tuple(args_cli.arm_cmd_pos_range)
         if args_cli.arm_cmd_resample_range is not None:
@@ -382,22 +596,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
     log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Loading experiment from directory: {log_root_path}")
-    if args_cli.use_pretrained_checkpoint:
-        if get_published_pretrained_checkpoint is None:
-            raise ModuleNotFoundError(
-                "The 'isaaclab.utils.pretrained_checkpoint' module is not available. "
-                "Please use --checkpoint instead of --use_pretrained_checkpoint."
-            )
-        resume_path = get_published_pretrained_checkpoint("rsl_rl", task_name)
-        if not resume_path:
-            print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
-            return
-    elif args_cli.checkpoint:
-        resume_path = retrieve_file_path(args_cli.checkpoint)
-    else:
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
-
-    log_dir = os.path.dirname(resume_path)
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
@@ -500,7 +698,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     arm_pose_set = None
     arm_pose_set_targets = None
     arm_pose_sequence = None
-    default_arm_sequence = None
     arm_action_map = None
     base_cmd_term = None
     fixed_base_cmd = None
@@ -652,46 +849,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             device=base_cmd_term.device,
         ).repeat(base_cmd_term.num_envs, 1)
 
-    # default arm sequence: wait 2s, move to extreme pose in ~2s, then hold
-    if (
-        env_cfg.commands.arm_joint_pos is not None
-        and args_cli.arm_cmd_pose is None
-        and args_cli.arm_cmd_pose_alt is None
-        and not args_cli.arm_cmd_schedule
-        and args_cli.arm_cmd_pose_set is None
-    ):
-        arm_term = env.unwrapped.command_manager._terms.get("arm_joint_pos", None)
-        if arm_term is not None:
-            defaults = arm_term.asset.data.default_joint_pos[:, arm_term.joint_ids]
-            pose_set_raw = getattr(env_cfg, "arm_pose_set", None)
-            if pose_set_raw is None:
-                pose_set_raw = default_pose_set_raw
-            pose_set = torch.tensor(pose_set_raw, device=defaults.device)
-            if pose_set.ndim != 2 or pose_set.shape[1] != len(arm_term.joint_ids):
-                raise ValueError(
-                    "arm_pose_set must be a list of poses with length equal to arm joint count."
-                )
-            # repeat each pose across 4 envs
-            pose_set = pose_set.repeat_interleave(4, dim=0)
-            env_ids = torch.arange(defaults.shape[0], device=defaults.device)
-            pose_indices = env_ids % pose_set.shape[0]
-            targets = pose_set[pose_indices]
-            if arm_term.cfg.clip_to_joint_limits:
-                limits = arm_term.asset.data.soft_joint_pos_limits[:, arm_term.joint_ids, :]
-                min_pos = limits[..., 0]
-                max_pos = limits[..., 1]
-                targets = torch.max(torch.min(targets, max_pos), min_pos)
-            warmup_steps = max(0, int(4.0 / dt))
-            move_steps = max(1, int(4.0 / dt))
-            hold_steps = max(1, int(2.0 / dt))
-            default_arm_sequence = {
-                "defaults": defaults,
-                "targets": targets,
-                "warmup_steps": warmup_steps,
-                "move_steps": move_steps,
-                "hold_steps": hold_steps,
-            }
-            arm_action_map = resolve_arm_action_map(arm_term)
     # simulate environment
     try:
         while simulation_app.is_running():
@@ -740,16 +897,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                             desired_arm_pos = seq["targets"][pose_idx].unsqueeze(0).repeat(seq["num_envs"], 1)
                         else:
                             desired_arm_pos = seq["defaults"]
-                if default_arm_sequence is not None:
-                    seq = default_arm_sequence
-                    if timestep < seq["warmup_steps"]:
-                        desired_arm_pos = seq["defaults"]
-                    elif timestep < seq["warmup_steps"] + seq["move_steps"]:
-                        alpha = (timestep - seq["warmup_steps"]) / seq["move_steps"]
-                        target_pos = seq["defaults"] + alpha * (seq["targets"] - seq["defaults"])
-                        desired_arm_pos = target_pos
-                    else:
-                        desired_arm_pos = seq["targets"]
                 if arm_pose_set_targets is not None:
                     desired_arm_pos = arm_pose_set_targets
                 if arm_term is not None and arm_pose is not None:

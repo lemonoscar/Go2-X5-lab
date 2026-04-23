@@ -43,6 +43,22 @@ ARM_FLAT_UNLOCK_FINAL_RANGE = [
     (-1.45, 1.45),
     (-1.45, 1.45),
 ]
+ARM_DOG_ONLY_ARM_SWING_START_RANGE = [
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+    (-0.08, 0.08),
+]
+ARM_DOG_ONLY_ARM_SWING_FINAL_RANGE = [
+    (-0.25, 0.25),
+    (-0.25, 0.25),
+    (-0.25, 0.25),
+    (-0.25, 0.25),
+    (-0.25, 0.25),
+    (-0.25, 0.25),
+]
 
 FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
     curriculum=False,
@@ -774,8 +790,8 @@ class Go2X5ArmLocomotionFlatEnvCfg(Go2X5ArmUnlockFlatEnvCfg):
 class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
     """Flat locomotion task where PPO controls only the 12 leg joints.
 
-    Arm motion is driven by the arm command term directly through a zero-dim action
-    follower, so the policy learns to stabilize and move the base under commanded arm motion.
+    The arm is locked at the default pose. This task is the clean locomotion bootstrap:
+    learn to stand still at zero command and move decisively when a base velocity is requested.
     """
 
     def __post_init__(self):
@@ -797,17 +813,19 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             preserve_order=True,
         )
 
-        # Keep dog-only on the same flat-plane locomotion distribution used by UMI.
-        # This task still carries arm-state observations, but the locomotion command
-        # content itself should match UMI's local_2d_vel setup.
+        # Keep dog-only close to UMI's fixed-arm local_2d_vel setup: a flat plane, 4 s command
+        # windows, and the same wide planar command support. We only add a small standing
+        # fraction so zero-velocity playback has explicit training support.
         self.scene.terrain.terrain_type = "plane"
         self.scene.terrain.terrain_generator = None
         self.curriculum.terrain_levels = None
-        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.rel_standing_envs = 0.10
         self.commands.base_velocity.resampling_time_range = (4.0, 4.0)
         self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
         self.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
         self.commands.base_velocity.ranges.ang_vel_z = (-1.5, 1.5)
+        self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (6.0, 8.0)
 
         # Preserve the historical 18-d action observation layout by padding the leg actions
         # with six zeros for the arm slots. This lets us reuse most of the old first-layer weights.
@@ -850,34 +868,32 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
                 },
             )
 
-        # Arm tracking is handled by the dedicated arm command follower, not by PPO actions.
-        # Keep only the coupling/stability terms that the base can meaningfully influence.
+        # Pure locomotion shaping: reward speed tracking strongly, keep zero-command standing
+        # behavior explicit, and remove arm-motion objectives since the arm is locked.
         dog_only_weights = {
-            "lin_vel_z_l2": -1.8,
-            "ang_vel_xy_l2": -0.10,
-            "flat_orientation_l2": -0.55,
-            "base_height_l2": -0.2,
-            "body_lin_acc_l2": -0.020,
+            "lin_vel_z_l2": -1.5,
+            "ang_vel_xy_l2": -0.08,
+            "flat_orientation_l2": -0.45,
+            "base_height_l2": -0.18,
+            "body_lin_acc_l2": -0.015,
             "joint_torques_l2": -1.5e-5,
             "joint_acc_l2": -1.0e-7,
-            "joint_pos_limits": -2.0,
+            "joint_pos_limits": -1.5,
             "joint_power": -1.0e-5,
-            "stand_still": -2.5,
-            "joint_pos_penalty": -0.60,
-            # UMI sweeps action-rate aggressively for real-world safety. Use the
-            # locomotion-side default instead of the milder project-specific weight.
+            "stand_still": -3.0,
+            "joint_pos_penalty": -0.45,
             "action_rate_l2": -0.02,
             "undesired_contacts": -1.0,
             "contact_forces": -1.0e-4,
-            "track_lin_vel_xy_exp": 4.0,
-            "track_ang_vel_z_exp": 2.0,
-            "feet_air_time": 1.0,
+            "track_lin_vel_xy_exp": 5.0,
+            "track_ang_vel_z_exp": 2.5,
+            "feet_air_time": 0.8,
             "feet_air_time_variance": 0.0,
-            "feet_contact_without_cmd": 0.0,
-            "feet_slide": 0.0,
+            "feet_contact_without_cmd": 0.35,
+            "feet_slide": -0.05,
             "feet_drag": -0.01,
             "feet_height_body": 0.0,
-            "feet_gait": 0.38,
+            "feet_gait": 0.12,
             "arm_joint_pos_tracking_l2": 0.0,
             "arm_joint_vel_l2": 0.0,
             "arm_joint_acc_l2": 0.0,
@@ -885,11 +901,11 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             "arm_action_rate_l2": 0.0,
             "arm_joint_pos_limits": 0.0,
             "arm_joint_deviation_l2": 0.0,
-            "arm_motion_tilt_penalty": -0.18,
-            "arm_pose_conditioned_base_stability": -0.22,
-            "zero_cmd_drift_under_arm_motion": -0.20,
-            "zero_cmd_xy_position_drift_under_arm_motion": -1.40,
-            "zero_cmd_yaw_drift_under_arm_motion": -0.45,
+            "arm_motion_tilt_penalty": 0.0,
+            "arm_pose_conditioned_base_stability": 0.0,
+            "zero_cmd_drift_under_arm_motion": 0.0,
+            "zero_cmd_xy_position_drift_under_arm_motion": 0.0,
+            "zero_cmd_yaw_drift_under_arm_motion": 0.0,
             "arm_action_in_unstable_base": 0.0,
             "arm_stable_track_bonus": 0.0,
         }
@@ -918,6 +934,231 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
         self.sim2sim_action_hold_prob = 0.05
         self.sim2sim_action_noise_std = 0.0
         self.sim2sim_obs_delay_steps = 0
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5DogOnlyArmFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
+    """Dog-only locomotion with command-driven arm swing disturbances.
+
+    PPO still controls only the 12 leg joints. The arm follows smooth commanded
+    joint trajectories so the base learns to stay stable while the arm moves.
+    """
+
+    arm_command_curriculum_iterations: int = 192
+    arm_command_curriculum_enable: bool = False
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        from isaaclab.managers import CurriculumTermCfg as CurrTerm
+
+        # Keep the same flat local_2d_vel command distribution as UMI locomotion.
+        # For arm swing itself, mimic UMI's direct-control target scale:
+        # target_joint_pos ~= default_offset + 0.25 * action.
+        self.commands.base_velocity.rel_standing_envs = 0.0
+        self.commands.base_velocity.resampling_time_range = (4.0, 4.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.5, 1.5)
+        self.commands.arm_joint_pos.position_range = ARM_DOG_ONLY_ARM_SWING_FINAL_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (4.0, 6.0)
+
+        if self.arm_command_curriculum_enable:
+            self.curriculum.arm_command_range = CurrTerm(
+                func=mdp.arm_joint_position_range_curriculum,
+                params={
+                    "command_name": "arm_joint_pos",
+                    "initial_position_range": ARM_DOG_ONLY_ARM_SWING_START_RANGE,
+                    "final_position_range": ARM_DOG_ONLY_ARM_SWING_FINAL_RANGE,
+                    "curriculum_iterations": self.arm_command_curriculum_iterations,
+                },
+            )
+        else:
+            self.curriculum.arm_command_range = None
+            self.commands.arm_joint_pos.position_range = ARM_DOG_ONLY_ARM_SWING_FINAL_RANGE
+
+        dog_only_arm_weights = {
+            "lin_vel_z_l2": -1.9,
+            "ang_vel_xy_l2": -0.12,
+            "flat_orientation_l2": -0.65,
+            "base_height_l2": -0.22,
+            "body_lin_acc_l2": -0.025,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -2.0,
+            "joint_power": -1.0e-5,
+            "stand_still": -2.2,
+            "joint_pos_penalty": -0.65,
+            "action_rate_l2": -0.02,
+            "undesired_contacts": -1.0,
+            "contact_forces": -1.0e-4,
+            "track_lin_vel_xy_exp": 4.0,
+            "track_ang_vel_z_exp": 2.0,
+            "feet_air_time": 0.85,
+            "feet_air_time_variance": 0.0,
+            "feet_contact_without_cmd": 0.0,
+            "feet_slide": 0.0,
+            "feet_drag": -0.01,
+            "feet_height_body": 0.0,
+            "feet_gait": 0.34,
+            # Keep the dog-only adaptation focused on base stability under
+            # command-driven arm motion, rather than turning it into an arm
+            # tracking task.
+            "arm_joint_pos_tracking_l2": 0.0,
+            "arm_joint_vel_l2": 0.0,
+            "arm_joint_acc_l2": 0.0,
+            "arm_joint_torques_l2": 0.0,
+            "arm_action_rate_l2": 0.0,
+            "arm_joint_pos_limits": 0.0,
+            "arm_joint_deviation_l2": 0.0,
+            "arm_motion_tilt_penalty": -0.32,
+            "arm_pose_conditioned_base_stability": -0.42,
+            "zero_cmd_drift_under_arm_motion": -0.35,
+            "zero_cmd_xy_position_drift_under_arm_motion": -2.0,
+            "zero_cmd_yaw_drift_under_arm_motion": -0.70,
+            "arm_action_in_unstable_base": 0.0,
+            "arm_stable_track_bonus": 0.0,
+        }
+
+        for attr_name, weight in dog_only_arm_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.feet_air_time.params["threshold"] = 0.45
+        self.rewards.upward.weight = 1.0
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5DogOnlyRecoverFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
+    """Fixed-arm forward-recovery stage for rescuing a stalled dog-only checkpoint.
+
+    This stage follows the spirit of UMI's fixed-arm locomotion: keep the arm frozen and
+    make the locomotion objective unambiguous. We temporarily collapse the command space to
+    forward-only x velocity so a partially-collapsed policy can relearn to walk before being
+    exposed to the full planar command distribution again.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Bias the recovery stage away from tiny near-zero forward commands that often
+        # collapse into shuffling. Keep a small explicit standing slice, but when we do
+        # ask for locomotion, request a clear forward intent and give the gait longer to settle.
+        self.commands.base_velocity.rel_standing_envs = 0.08
+        self.commands.base_velocity.resampling_time_range = (5.0, 5.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.20, 0.75)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (6.0, 8.0)
+
+        # Favour larger leg excursions so the policy learns to commit to a longer step
+        # instead of resolving commands with high-cadence shuffles.
+        self.actions.joint_pos.scale = {
+            ".*_hip_joint": 0.18,
+            ".*_thigh_joint": 0.32,
+            ".*_calf_joint": 0.32,
+        }
+
+        # Softer leg PD makes the motion less twitchy and lets the policy trade cadence
+        # for amplitude. This is scoped to the recover task only.
+        self.scene.robot.actuators["legs_hip_thigh"].stiffness = 32.0
+        self.scene.robot.actuators["legs_hip_thigh"].damping = 0.8
+        self.scene.robot.actuators["legs_calf"].stiffness = 36.0
+        self.scene.robot.actuators["legs_calf"].damping = 0.9
+
+        if self.rewards.feet_height_body is None:
+            self.rewards.feet_height_body = RewTerm(
+                func=mdp.feet_height_body,
+                weight=0.0,
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=[self.foot_link_name]),
+                    "tanh_mult": 2.0,
+                    "target_height": -0.16,
+                    "command_name": "base_velocity",
+                },
+            )
+
+        # Keep the feet spread into a longer stance to discourage compressed, tiny-step motion.
+        self.rewards.feet_distance_xy_exp = RewTerm(
+            func=mdp.feet_distance_xy_exp,
+            weight=0.10,
+            params={
+                "std": 0.50,
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    body_names=["FR_foot", "FL_foot", "RR_foot", "RL_foot"],
+                    preserve_order=True,
+                ),
+                "stance_length": 0.46,
+                "stance_width": 0.30,
+            },
+        )
+
+        recover_weights = {
+            "lin_vel_z_l2": -1.4,
+            "ang_vel_xy_l2": -0.08,
+            "flat_orientation_l2": -0.45,
+            "base_height_l2": -0.18,
+            "body_lin_acc_l2": -0.015,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -1.5,
+            "joint_power": -1.0e-5,
+            "stand_still": -1.8,
+            "joint_pos_penalty": -0.22,
+            "action_rate_l2": -0.012,
+            "undesired_contacts": -1.25,
+            "contact_forces": -1.0e-4,
+            "track_lin_vel_xy_exp": 6.0,
+            "track_ang_vel_z_exp": 1.0,
+            "feet_air_time": 1.6,
+            "feet_air_time_variance": -0.15,
+            "feet_contact_without_cmd": 0.35,
+            "feet_slide": -0.08,
+            "feet_drag": -0.03,
+            "feet_height_body": -0.80,
+            "feet_gait": 0.30,
+            "arm_joint_pos_tracking_l2": 0.0,
+            "arm_joint_vel_l2": 0.0,
+            "arm_joint_acc_l2": 0.0,
+            "arm_joint_torques_l2": 0.0,
+            "arm_action_rate_l2": 0.0,
+            "arm_joint_pos_limits": 0.0,
+            "arm_joint_deviation_l2": 0.0,
+            "arm_motion_tilt_penalty": 0.0,
+            "arm_pose_conditioned_base_stability": 0.0,
+            "zero_cmd_drift_under_arm_motion": 0.0,
+            "zero_cmd_xy_position_drift_under_arm_motion": 0.0,
+            "zero_cmd_yaw_drift_under_arm_motion": 0.0,
+            "arm_action_in_unstable_base": 0.0,
+            "arm_stable_track_bonus": 0.0,
+        }
+
+        for attr_name, weight in recover_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.feet_air_time.params["threshold"] = 0.60
+        self.rewards.feet_height_body.params["target_height"] = -0.16
+        self.rewards.feet_height_body.params["tanh_mult"] = 1.5
+        self.rewards.feet_drag.params["penalty_feet_drag_height"] = 0.14
+        self.rewards.feet_drag.params["feet_drag_sigma"] = 0.04
+        self.rewards.feet_gait.params["command_threshold"] = 0.05
+        self.rewards.feet_gait.params["velocity_threshold"] = 0.15
+        self.rewards.feet_gait.params["max_err"] = 0.15
+        self.rewards.joint_pos_penalty.params["stand_still_scale"] = 2.0
+        self.rewards.joint_pos_penalty.params["velocity_threshold"] = 0.20
+        self.rewards.joint_pos_penalty.params["command_threshold"] = 0.05
+        self.rewards.upward.weight = 1.0
 
         self.disable_zero_weight_rewards()
 
