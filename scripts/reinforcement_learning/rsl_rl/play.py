@@ -39,6 +39,12 @@ parser.add_argument(
     help="Disable training-time randomization for cleaner demos instead of matching the train-time task distribution.",
 )
 parser.add_argument(
+    "--easy_terrain_only",
+    action="store_true",
+    default=False,
+    help="For rough-terrain play, keep only low-difficulty terrain types and shrink the terrain grid.",
+)
+parser.add_argument(
     "--base_cmd",
     type=float,
     nargs=3,
@@ -305,6 +311,66 @@ def _disable_play_randomization(
             env_cfg.observations.policy.arm_joint_command.params.pop("delay_steps", None)
 
 
+def _restrict_to_easy_terrains(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg):
+    """Keep all terrain types and force playback to the easiest difficulty row."""
+    terrain = getattr(env_cfg.scene, "terrain", None)
+    terrain_generator = getattr(terrain, "terrain_generator", None)
+    if terrain is None or terrain_generator is None or getattr(terrain_generator, "sub_terrains", None) is None:
+        return
+
+    preferred_order = (
+        "hf_pyramid_slope",      # up slope
+        "hf_pyramid_slope_inv",  # down slope
+        "pyramid_stairs",        # up stairs
+        "pyramid_stairs_inv",    # down stairs
+        "boxes",                 # uneven / blocky
+        "random_rough",          # rough / pitted
+    )
+    ordered_sub_terrains = {
+        name: terrain_generator.sub_terrains[name]
+        for name in preferred_order
+        if name in terrain_generator.sub_terrains
+    }
+    if ordered_sub_terrains:
+        terrain_generator.sub_terrains = ordered_sub_terrains
+
+    # Terrain rows correspond to difficulty while columns enumerate terrain types.
+    # Use a single row so every instantiated environment is the easiest version of its terrain type.
+    terrain_generator.num_rows = 1
+    terrain_generator.num_cols = len(terrain_generator.sub_terrains)
+    terrain_generator.curriculum = True
+    terrain.max_init_terrain_level = 0
+    terrain_generator.difficulty_range = (0.0, 0.0)
+
+    # Tune the easiest variants for demo readability:
+    # make slopes slightly more apparent while keeping stairs conservative.
+    slope_up = terrain_generator.sub_terrains.get("hf_pyramid_slope")
+    if slope_up is not None and hasattr(slope_up, "slope_range"):
+        slope_up.slope_range = (0.22, 0.22)
+
+    slope_down = terrain_generator.sub_terrains.get("hf_pyramid_slope_inv")
+    if slope_down is not None and hasattr(slope_down, "slope_range"):
+        slope_down.slope_range = (0.36, 0.36)
+
+    stairs_up = terrain_generator.sub_terrains.get("pyramid_stairs")
+    if stairs_up is not None and hasattr(stairs_up, "step_height_range"):
+        stairs_up.step_height_range = (0.06, 0.06)
+
+    stairs_down = terrain_generator.sub_terrains.get("pyramid_stairs_inv")
+    if stairs_down is not None and hasattr(stairs_down, "step_height_range"):
+        stairs_down.step_height_range = (0.075, 0.075)
+
+    boxes = terrain_generator.sub_terrains.get("boxes")
+    if boxes is not None and hasattr(boxes, "grid_height_range"):
+        boxes.grid_height_range = (0.075, 0.075)
+
+    random_rough = terrain_generator.sub_terrains.get("random_rough")
+    if random_rough is not None and hasattr(random_rough, "noise_range"):
+        random_rough.noise_range = (0.03, 0.03)
+    if random_rough is not None and hasattr(random_rough, "noise_step"):
+        random_rough.noise_step = 0.01
+
+
 def _load_logged_env_snapshot(log_dir: str):
     env_yaml_path = os.path.join(log_dir, "params", "env.yaml")
     if not os.path.exists(env_yaml_path):
@@ -526,6 +592,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     if args_cli.deterministic_playback:
         _disable_play_randomization(env_cfg, preserve_sim2sim=logged_env_cfg is not None)
+    if args_cli.easy_terrain_only:
+        _restrict_to_easy_terrains(env_cfg)
     # avoid early episode termination during play/recording
     if getattr(env_cfg, "terminations", None) is not None:
         env_cfg.terminations.terrain_out_of_bounds = None
@@ -572,6 +640,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
     else:
         print("[INFO] Play keeps the train-time task distribution unless you override commands via CLI.")
+    if args_cli.easy_terrain_only:
+        print("[INFO] Easy terrain only enabled: keeping all terrain types at the easiest difficulty row.")
 
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
