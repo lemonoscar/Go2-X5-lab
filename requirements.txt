@@ -1,0 +1,11 @@
+# Python dependencies installed directly by this repository.
+# Isaac Sim, Isaac Lab, isaaclab_* packages, CUDA, and PyTorch are expected to
+# come from the project Isaac Lab environment rather than this file.
+
+colorama
+numpy
+psutil
+toml
+
+# Optional workflow:
+#   python -m pip install -e "source/robot_lab[cusrl]"

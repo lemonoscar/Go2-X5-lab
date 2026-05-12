@@ -212,6 +212,89 @@ def arm_joint_position_range_staged_curriculum(
     return float(stage_idx - 1) + progress
 
 
+def base_velocity_range_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    initial_lin_vel_x: Sequence[float],
+    final_lin_vel_x: Sequence[float],
+    initial_lin_vel_y: Sequence[float],
+    final_lin_vel_y: Sequence[float],
+    initial_ang_vel_z: Sequence[float],
+    final_ang_vel_z: Sequence[float],
+    curriculum_iterations: int = 6800,
+) -> None:
+    """Linearly widen the base velocity command range over PPO iterations."""
+
+    del env_ids
+
+    current_iter = getattr(env, "common_step_counter", 0) // getattr(env, "max_episode_length", 1)
+    state = getattr(env, "_base_velocity_range_curriculum_state", None)
+    if state is None:
+        state = {
+            "start_iter": current_iter,
+            "total_iters": curriculum_iterations,
+            "initial_lin_vel_x": tuple(initial_lin_vel_x),
+            "final_lin_vel_x": tuple(final_lin_vel_x),
+            "initial_lin_vel_y": tuple(initial_lin_vel_y),
+            "final_lin_vel_y": tuple(final_lin_vel_y),
+            "initial_ang_vel_z": tuple(initial_ang_vel_z),
+            "final_ang_vel_z": tuple(final_ang_vel_z),
+        }
+        env._base_velocity_range_curriculum_state = state
+
+    progress = min((current_iter - state["start_iter"]) / max(state["total_iters"], 1), 1.0)
+
+    def _interpolate(initial_range, final_range):
+        lower = initial_range[0] + (final_range[0] - initial_range[0]) * progress
+        upper = initial_range[1] + (final_range[1] - initial_range[1]) * progress
+        return (float(lower), float(upper))
+
+    ranges = env.command_manager.get_term("base_velocity").cfg.ranges
+    ranges.lin_vel_x = _interpolate(state["initial_lin_vel_x"], state["final_lin_vel_x"])
+    ranges.lin_vel_y = _interpolate(state["initial_lin_vel_y"], state["final_lin_vel_y"])
+    ranges.ang_vel_z = _interpolate(state["initial_ang_vel_z"], state["final_ang_vel_z"])
+    return progress
+
+
+def reward_parameter_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str,
+    param_name: str,
+    initial_value: float,
+    final_value: float,
+    curriculum_iterations: int = 800,
+) -> None:
+    """Linearly update one scalar reward parameter over PPO iterations."""
+
+    del env_ids
+
+    current_iter = getattr(env, "common_step_counter", 0) // getattr(env, "max_episode_length", 1)
+    state = getattr(env, "_reward_parameter_curriculum_state", None)
+    if state is None:
+        state = {}
+        env._reward_parameter_curriculum_state = state
+
+    key = (reward_term_name, param_name)
+    if key not in state:
+        state[key] = {
+            "start_iter": current_iter,
+            "initial_value": float(initial_value),
+            "final_value": float(final_value),
+            "total_iters": curriculum_iterations,
+        }
+
+    term_state = state[key]
+    progress = min((current_iter - term_state["start_iter"]) / max(term_state["total_iters"], 1), 1.0)
+    current_value = term_state["initial_value"] + (term_state["final_value"] - term_state["initial_value"]) * progress
+
+    if hasattr(env.reward_manager, "_term_names") and reward_term_name in env.reward_manager._term_names:
+        reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
+        reward_term_cfg.params[param_name] = float(current_value)
+        env.reward_manager.set_term_cfg(reward_term_name, reward_term_cfg)
+    return float(current_value)
+
+
 def reward_weights_curriculum(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],

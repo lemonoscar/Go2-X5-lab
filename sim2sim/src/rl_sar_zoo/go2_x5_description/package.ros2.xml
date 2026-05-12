@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>go2_x5_description</name>
+  <version>0.1.0</version>
+  <description>URDF/Xacro and meshes for go2_x5 robot.</description>
+  <maintainer email="todo@example.com">go2_x5</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>robot_state_publisher</depend>
+  <depend>gazebo_ros</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

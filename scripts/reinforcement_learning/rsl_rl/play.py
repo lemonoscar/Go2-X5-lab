@@ -1,5 +1,7 @@
 import argparse
+import glob
 import os
+import re
 import sys
 import yaml
 
@@ -156,12 +158,19 @@ parser.add_argument(
     default=2.5,
     help="Seconds to hold the target arm command before resampling.",
 )
+parser.add_argument(
+    "--debug_interval",
+    type=int,
+    default=0,
+    help="Print a compact playback summary every N simulation steps (0 disables runtime debug output).",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
+args_cli.requested_task = args_cli.task
 # always enable cameras to record video
 if args_cli.video:
     args_cli.enable_cameras = True
@@ -202,6 +211,195 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import robot_lab.tasks  # noqa: F401
 import robot_lab.tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
+
+
+def _normalize_search_tokens(value: str) -> list[str]:
+    return [token for token in re.sub(r"[^a-z0-9]+", "_", value.lower()).split("_") if token]
+
+
+def _build_task_search_blob(task_name: str) -> str:
+    registry = getattr(gym, "registry", {})
+    spec = registry.get(task_name)
+    if spec is None:
+        return task_name.lower()
+    searchable_parts = [task_name]
+    for value in (getattr(spec, "kwargs", {}) or {}).values():
+        if isinstance(value, str):
+            searchable_parts.append(value)
+    return " ".join(searchable_parts).lower().replace("-", "_").replace(".", "_").replace(":", "_")
+
+
+def _resolve_task_alias(task_name: str | None) -> str | None:
+    if task_name is None:
+        return None
+
+    registry = getattr(gym, "registry", {})
+    if task_name in registry:
+        return task_name
+
+    alias_tokens = _normalize_search_tokens(task_name)
+    if not alias_tokens:
+        return task_name
+
+    flat_requested = "flat" in alias_tokens
+    rough_requested = "rough" in alias_tokens
+    candidates: list[tuple[tuple[int, int, str], str]] = []
+    for env_id in registry:
+        searchable = _build_task_search_blob(env_id)
+        if all(token in searchable for token in alias_tokens):
+            score = 0
+            if "umi_locomotion6d_env_cfg" in searchable:
+                score += 10
+            if "umi_rsl_rl_ppo_cfg" in searchable:
+                score += 8
+            if "umi" in searchable:
+                score += 4
+            if "locomotion6d" in searchable:
+                score += 4
+            if flat_requested and "flat" in searchable:
+                score += 2
+            if rough_requested and "rough" in searchable:
+                score += 2
+            if not flat_requested and not rough_requested and "flat" in searchable:
+                score += 1
+            candidates.append(((score, -len(env_id), env_id), env_id))
+
+    if not candidates:
+        return task_name
+
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _resolve_base_command_cfg(env_cfg):
+    commands_cfg = getattr(env_cfg, "commands", None)
+    if commands_cfg is None:
+        return None, None
+    for name in ("base_velocity", "locomotion6d"):
+        command_cfg = getattr(commands_cfg, name, None)
+        if command_cfg is not None:
+            return command_cfg, name
+    return None, None
+
+
+def _extract_checkpoint_step(path: str) -> int:
+    match = re.search(r"(\d+)(?=\.pt$)", os.path.basename(path))
+    return int(match.group(1)) if match else -1
+
+
+def _list_checkpoint_files(directory: str) -> list[str]:
+    candidates: list[str] = []
+    for pattern in ("model_*.pt", "*.pt"):
+        for path in glob.glob(os.path.join(directory, pattern)):
+            if not os.path.isfile(path):
+                continue
+            filename = os.path.basename(path)
+            if filename in {"policy.pt"}:
+                continue
+            candidates.append(os.path.abspath(path))
+    return sorted(set(candidates))
+
+
+def _resolve_latest_checkpoint_in_directory(directory: str) -> str | None:
+    directory = os.path.abspath(os.path.expanduser(directory))
+    direct_candidates = _list_checkpoint_files(directory)
+    if direct_candidates:
+        return max(
+            direct_candidates,
+            key=lambda path: (os.path.basename(os.path.dirname(path)), _extract_checkpoint_step(path), path),
+        )
+
+    nested_candidates: list[str] = []
+    for child in glob.glob(os.path.join(directory, "*")):
+        if os.path.isdir(child):
+            nested_candidates.extend(_list_checkpoint_files(child))
+    if nested_candidates:
+        return max(
+            nested_candidates,
+            key=lambda path: (os.path.basename(os.path.dirname(path)), _extract_checkpoint_step(path), path),
+        )
+    return None
+
+
+def _resolve_play_checkpoint(
+    checkpoint_arg: str | None, log_root_path: str, load_run: str | None, load_checkpoint: str | None
+) -> tuple[str, str]:
+    if checkpoint_arg is None:
+        return get_checkpoint_path(log_root_path, load_run, load_checkpoint), f"log root {log_root_path}"
+
+    expanded_checkpoint_arg = os.path.abspath(os.path.expanduser(checkpoint_arg))
+    if os.path.isdir(expanded_checkpoint_arg):
+        resolved = _resolve_latest_checkpoint_in_directory(expanded_checkpoint_arg)
+        if resolved is None:
+            raise FileNotFoundError(f"No checkpoint *.pt files found under directory: {expanded_checkpoint_arg}")
+        return resolved, f"directory {expanded_checkpoint_arg}"
+    if os.path.isfile(expanded_checkpoint_arg):
+        return expanded_checkpoint_arg, "explicit checkpoint file"
+
+    resolved_path = None
+    try:
+        resolved_path = retrieve_file_path(checkpoint_arg)
+    except (FileNotFoundError, ValueError):
+        resolved_path = None
+
+    if resolved_path is not None:
+        resolved_path = os.path.abspath(os.path.expanduser(resolved_path))
+        if os.path.isdir(resolved_path):
+            resolved = _resolve_latest_checkpoint_in_directory(resolved_path)
+            if resolved is None:
+                raise FileNotFoundError(f"No checkpoint *.pt files found under directory: {resolved_path}")
+            return resolved, f"resolved directory {resolved_path}"
+        if os.path.isfile(resolved_path):
+            return resolved_path, "resolved checkpoint path"
+
+    return get_checkpoint_path(log_root_path, load_run, checkpoint_arg), f"log root {log_root_path}"
+
+
+def _format_debug_tensor(values: torch.Tensor | None, limit: int = 6) -> str:
+    if values is None:
+        return "n/a"
+    flat_values = values.detach().cpu().reshape(-1).tolist()
+    shown_values = flat_values[:limit]
+    rendered = ", ".join(f"{value:+.3f}" for value in shown_values)
+    if len(flat_values) > limit:
+        rendered += ", ..."
+    return f"[{rendered}]"
+
+
+def _print_play_debug_summary(
+    env,
+    step_count: int,
+    actions: torch.Tensor | None,
+    rewards: torch.Tensor | None,
+    base_cmd_term=None,
+    arm_term=None,
+):
+    robot = None
+    try:
+        robot = env.unwrapped.scene["robot"]
+    except Exception:
+        robot = None
+
+    summary_parts = [f"step={step_count}"]
+    if base_cmd_term is not None and hasattr(base_cmd_term, "vel_command_b"):
+        summary_parts.append(f"base_cmd={_format_debug_tensor(base_cmd_term.vel_command_b[0], limit=3)}")
+    if arm_term is not None and hasattr(arm_term, "command_buffer"):
+        summary_parts.append(f"arm_cmd={_format_debug_tensor(arm_term.command_buffer[0], limit=6)}")
+    if robot is not None:
+        robot_data = robot.data
+        if hasattr(robot_data, "root_pos_w"):
+            summary_parts.append(f"base_z={float(robot_data.root_pos_w[0, 2].item()):+.3f}")
+        if hasattr(robot_data, "root_lin_vel_b"):
+            summary_parts.append(f"base_lin_vel={_format_debug_tensor(robot_data.root_lin_vel_b[0, :3], limit=3)}")
+        if hasattr(robot_data, "projected_gravity_b"):
+            tilt = torch.linalg.norm(robot_data.projected_gravity_b[0, :2]).item()
+            summary_parts.append(f"base_tilt={tilt:+.3f}")
+    if rewards is not None and rewards.numel() > 0:
+        summary_parts.append(f"reward0={float(rewards[0].item()):+.3f}")
+        if rewards.numel() > 1:
+            summary_parts.append(f"reward_mean={float(rewards.mean().item()):+.3f}")
+    if actions is not None and actions.numel() > 0:
+        summary_parts.append(f"action_norm={float(torch.linalg.norm(actions[0]).item()):+.3f}")
+    print("[DEBUG] " + ", ".join(summary_parts))
 
 
 def _disable_play_randomization(
@@ -260,6 +458,8 @@ def _disable_play_randomization(
             "randomize_push_robot",
             "push_robot",
             "randomize_actuator_gains",
+            "umi_push_robot",
+            "umi_force_disturbance",
         ):
             if hasattr(env_cfg.events, term_name):
                 setattr(env_cfg.events, term_name, None)
@@ -303,6 +503,12 @@ def _disable_play_randomization(
                 env_cfg.observations.policy.velocity_commands.params = {}
             env_cfg.observations.policy.velocity_commands.params["command_name"] = "base_velocity"
             env_cfg.observations.policy.velocity_commands.params.pop("delay_steps", None)
+        if getattr(env_cfg.observations.policy, "locomotion6d_command", None) is not None:
+            env_cfg.observations.policy.locomotion6d_command.func = locomotion_mdp.generated_commands
+            if env_cfg.observations.policy.locomotion6d_command.params is None:
+                env_cfg.observations.policy.locomotion6d_command.params = {}
+            env_cfg.observations.policy.locomotion6d_command.params["command_name"] = "locomotion6d"
+            env_cfg.observations.policy.locomotion6d_command.params.pop("delay_steps", None)
         if getattr(env_cfg.observations.policy, "arm_joint_command", None) is not None:
             env_cfg.observations.policy.arm_joint_command.func = locomotion_mdp.generated_commands
             if env_cfg.observations.policy.arm_joint_command.params is None:
@@ -421,11 +627,12 @@ def _apply_logged_playback_overrides(env_cfg, logged_env_cfg: dict | None):
         ("clip", "joint_names", "command_name", "preserve_order"),
     )
 
-    base_velocity_cfg = logged_env_cfg.get("commands", {}).get("base_velocity", {})
-    current_base_velocity = getattr(getattr(env_cfg, "commands", None), "base_velocity", None)
+    logged_commands = logged_env_cfg.get("commands", {})
+    base_command_cfg = logged_commands.get("base_velocity") or logged_commands.get("locomotion6d", {})
+    current_base_velocity, current_base_command_name = _resolve_base_command_cfg(env_cfg)
     _restore_cfg_attrs(
         current_base_velocity,
-        base_velocity_cfg,
+        base_command_cfg,
         (
             "resampling_time_range",
             "heading_command",
@@ -434,14 +641,14 @@ def _apply_logged_playback_overrides(env_cfg, logged_env_cfg: dict | None):
             "rel_heading_envs",
         ),
     )
-    if current_base_velocity is not None and "ranges" in base_velocity_cfg:
+    if current_base_velocity is not None and "ranges" in base_command_cfg:
         _restore_cfg_attrs(
             current_base_velocity.ranges,
-            base_velocity_cfg["ranges"],
-            ("lin_vel_x", "lin_vel_y", "ang_vel_z", "heading"),
+            base_command_cfg["ranges"],
+            ("lin_vel_x", "lin_vel_y", "ang_vel_z", "heading", "z_height", "roll", "pitch"),
         )
 
-    arm_command_cfg = logged_env_cfg.get("commands", {}).get("arm_joint_pos", {})
+    arm_command_cfg = logged_commands.get("arm_joint_pos", {})
     current_arm_command = getattr(getattr(env_cfg, "commands", None), "arm_joint_pos", None)
     _restore_cfg_attrs(
         current_arm_command,
@@ -520,6 +727,7 @@ def _apply_logged_playback_overrides(env_cfg, logged_env_cfg: dict | None):
             "joint_vel",
             "actions",
             "velocity_commands",
+            "locomotion6d_command",
             "arm_joint_command",
         ):
             if term_name not in logged_policy_obs or not hasattr(current_policy_obs, term_name):
@@ -538,7 +746,7 @@ def _apply_logged_playback_overrides(env_cfg, logged_env_cfg: dict | None):
                 _restore_term_params(current_term, logged_term_cfg, ("delay_steps",))
             elif term_name == "actions":
                 _restore_term_params(current_term, logged_term_cfg, ("delay_steps", "total_action_dim", "pad_value"))
-            elif term_name in ("velocity_commands", "arm_joint_command"):
+            elif term_name in ("velocity_commands", "locomotion6d_command", "arm_joint_command"):
                 _restore_term_params(current_term, logged_term_cfg, ("command_name", "delay_steps"))
 
     for key in (
@@ -549,6 +757,9 @@ def _apply_logged_playback_overrides(env_cfg, logged_env_cfg: dict | None):
     ):
         if key in logged_env_cfg and hasattr(env_cfg, key):
             setattr(env_cfg, key, logged_env_cfg[key])
+
+
+args_cli.task = _resolve_task_alias(args_cli.task)
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -565,6 +776,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    log_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", agent_cfg.experiment_name))
 
     # resolve checkpoint early so play can reuse the logged training config when available
     if args_cli.use_pretrained_checkpoint:
@@ -577,12 +789,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         if not resume_path:
             print("[INFO] Unfortunately a pre-trained checkpoint is currently unavailable for this task.")
             return
+        checkpoint_source = "published pre-trained checkpoint"
     elif args_cli.checkpoint:
-        resume_path = retrieve_file_path(args_cli.checkpoint)
+        resume_path, checkpoint_source = _resolve_play_checkpoint(
+            args_cli.checkpoint, log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
+        )
     else:
-        log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
-        log_root_path = os.path.abspath(log_root_path)
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        resume_path, checkpoint_source = _resolve_play_checkpoint(
+            None, log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint
+        )
 
     log_dir = os.path.dirname(resume_path)
     logged_env_cfg = _load_logged_env_snapshot(log_dir)
@@ -598,17 +813,28 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if getattr(env_cfg, "terminations", None) is not None:
         env_cfg.terminations.terrain_out_of_bounds = None
 
+    if args_cli.requested_task and args_cli.requested_task != args_cli.task:
+        print(f"[INFO] Resolved task alias '{args_cli.requested_task}' -> '{args_cli.task}'")
+    if "umi" in _build_task_search_blob(args_cli.task) and not args_cli.deterministic_playback:
+        print("[INFO] UMI task detected. Use --deterministic_playback for the most stable checkpoint replay.")
+
     if args_cli.keyboard and args_cli.base_cmd is not None:
         raise ValueError("--base_cmd is not compatible with --keyboard.")
+
+    base_command_cfg, base_command_name = _resolve_base_command_cfg(env_cfg)
+    if base_command_cfg is None:
+        raise RuntimeError("Play requires an active base locomotion command term.")
 
     controller = None
     if args_cli.keyboard:
         # Match teleop sensitivity to the task command ranges instead of pushing the policy outside training support.
-        lin_vel_x_max = max(abs(v) for v in env_cfg.commands.base_velocity.ranges.lin_vel_x)
-        lin_vel_y_max = max(abs(v) for v in env_cfg.commands.base_velocity.ranges.lin_vel_y)
-        ang_vel_z_max = max(abs(v) for v in env_cfg.commands.base_velocity.ranges.ang_vel_z)
-        env_cfg.commands.base_velocity.rel_standing_envs = 0.0
-        env_cfg.commands.base_velocity.rel_heading_envs = 0.0
+        lin_vel_x_max = max(abs(v) for v in base_command_cfg.ranges.lin_vel_x)
+        lin_vel_y_max = max(abs(v) for v in base_command_cfg.ranges.lin_vel_y)
+        ang_vel_z_max = max(abs(v) for v in base_command_cfg.ranges.ang_vel_z)
+        if hasattr(base_command_cfg, "rel_standing_envs"):
+            base_command_cfg.rel_standing_envs = 0.0
+        if hasattr(base_command_cfg, "rel_heading_envs"):
+            base_command_cfg.rel_heading_envs = 0.0
         print(
             "[INFO] Keyboard command limits "
             f"lin_x=+/-{lin_vel_x_max:.3f}, lin_y=+/-{lin_vel_y_max:.3f}, ang_z=+/-{ang_vel_z_max:.3f}"
@@ -616,11 +842,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     fixed_base_cmd_cfg = None
     if args_cli.base_cmd is not None:
         fixed_base_cmd_cfg = tuple(args_cli.base_cmd)
-        env_cfg.commands.base_velocity.rel_standing_envs = 0.0
-        env_cfg.commands.base_velocity.rel_heading_envs = 0.0
-        env_cfg.commands.base_velocity.ranges.lin_vel_x = (fixed_base_cmd_cfg[0], fixed_base_cmd_cfg[0])
-        env_cfg.commands.base_velocity.ranges.lin_vel_y = (fixed_base_cmd_cfg[1], fixed_base_cmd_cfg[1])
-        env_cfg.commands.base_velocity.ranges.ang_vel_z = (fixed_base_cmd_cfg[2], fixed_base_cmd_cfg[2])
+        if hasattr(base_command_cfg, "rel_standing_envs"):
+            base_command_cfg.rel_standing_envs = 0.0
+        if hasattr(base_command_cfg, "rel_heading_envs"):
+            base_command_cfg.rel_heading_envs = 0.0
+        base_command_cfg.ranges.lin_vel_x = (fixed_base_cmd_cfg[0], fixed_base_cmd_cfg[0])
+        base_command_cfg.ranges.lin_vel_y = (fixed_base_cmd_cfg[1], fixed_base_cmd_cfg[1])
+        base_command_cfg.ranges.ang_vel_z = (fixed_base_cmd_cfg[2], fixed_base_cmd_cfg[2])
         print(
             "[INFO] Play command fixed to "
             f"lin_x={fixed_base_cmd_cfg[0]:.3f}, lin_y={fixed_base_cmd_cfg[1]:.3f}, ang_z={fixed_base_cmd_cfg[2]:.3f}"
@@ -628,10 +856,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     elif not args_cli.keyboard:
         print(
             "[INFO] Play uses the task command distribution "
-            f"lin_x={env_cfg.commands.base_velocity.ranges.lin_vel_x}, "
-            f"lin_y={env_cfg.commands.base_velocity.ranges.lin_vel_y}, "
-            f"ang_z={env_cfg.commands.base_velocity.ranges.ang_vel_z}, "
-            f"stand={env_cfg.commands.base_velocity.rel_standing_envs:.2f}"
+            f"lin_x={base_command_cfg.ranges.lin_vel_x}, "
+            f"lin_y={base_command_cfg.ranges.lin_vel_y}, "
+            f"ang_z={base_command_cfg.ranges.ang_vel_z}, "
+            f"stand={getattr(base_command_cfg, 'rel_standing_envs', 0.0):.2f}"
         )
     if args_cli.deterministic_playback:
         print(
@@ -642,11 +870,14 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("[INFO] Play keeps the train-time task distribution unless you override commands via CLI.")
     if args_cli.easy_terrain_only:
         print("[INFO] Easy terrain only enabled: keeping all terrain types at the easiest difficulty row.")
+    if args_cli.debug_interval > 0:
+        print(f"[INFO] Runtime debug summary enabled every {args_cli.debug_interval} simulation steps.")
 
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
         env_cfg.terminations.time_out = None
-        env_cfg.commands.base_velocity.debug_vis = False
+        if hasattr(base_command_cfg, "debug_vis"):
+            base_command_cfg.debug_vis = False
         config = Se2KeyboardCfg(
             v_x_sensitivity=lin_vel_x_max,
             v_y_sensitivity=lin_vel_y_max,
@@ -654,18 +885,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
         controller = Se2Keyboard(config)
 
-    if env_cfg.commands.arm_joint_pos is not None:
+    arm_command_cfg = getattr(getattr(env_cfg, "commands", None), "arm_joint_pos", None)
+    if arm_command_cfg is not None:
         # Match the training task by default. Only override the arm command source when the
         # user explicitly requests it via CLI.
         if args_cli.arm_cmd_pos_range is not None:
-            env_cfg.commands.arm_joint_pos.position_range = tuple(args_cli.arm_cmd_pos_range)
+            arm_command_cfg.position_range = tuple(args_cli.arm_cmd_pos_range)
         if args_cli.arm_cmd_resample_range is not None:
-            env_cfg.commands.arm_joint_pos.resampling_time_range = tuple(args_cli.arm_cmd_resample_range)
+            arm_command_cfg.resampling_time_range = tuple(args_cli.arm_cmd_resample_range)
 
     # specify directory for logging experiments
-    log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
-    log_root_path = os.path.abspath(log_root_path)
     print(f"[INFO] Loading experiment from directory: {log_root_path}")
+    print(f"[INFO] Checkpoint resolution source: {checkpoint_source}")
 
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
@@ -904,9 +1135,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         }
         arm_action_map = resolve_arm_action_map(arm_term)
 
-    base_cmd_term = env.unwrapped.command_manager._terms.get("base_velocity", None)
+    base_cmd_term = env.unwrapped.command_manager._terms.get(base_command_name, None)
     if args_cli.keyboard and base_cmd_term is None:
-        raise RuntimeError("Keyboard control requires an active base_velocity command term.")
+        raise RuntimeError("Keyboard control requires an active base locomotion command term.")
     fixed_base_cmd = None
     if base_cmd_term is not None and fixed_base_cmd_cfg is not None:
         fixed_base_cmd = torch.tensor(
@@ -1005,8 +1236,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                     actions[:, idx] = raw_arm
                 # actions = torch.zeros_like(actions)
                 # env stepping
-                obs, _, _, _ = env.step(actions)
+                obs, rewards, _, _ = env.step(actions)
             timestep += 1
+            if args_cli.debug_interval > 0 and timestep % args_cli.debug_interval == 0:
+                _print_play_debug_summary(env, timestep, actions, rewards, base_cmd_term=base_cmd_term, arm_term=arm_term)
             if args_cli.video:
                 # Exit the play loop after recording one video
                 if timestep == args_cli.video_length:

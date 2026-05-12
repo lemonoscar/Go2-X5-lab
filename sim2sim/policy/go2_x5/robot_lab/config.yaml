@@ -1,0 +1,123 @@
+# Copyright (c) 2024-2025 Ziqi Fan
+# SPDX-License-Identifier: Apache-2.0
+
+go2_x5/robot_lab:
+  model_name: "policy.onnx"
+  policy_mode: "dog_only"
+  policy_controls_arm: false
+  num_observations: 260
+  observations: ["lin_vel", "ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions", "height_scan", "arm_joint_command", "gripper_command"]
+  observations_history: []
+  observations_history_priority: "time"
+  height_scan_size: 187
+  height_scan_width: 17
+  height_scan_height: 11
+  clip_obs: 100.0
+
+  num_of_dofs: 18
+  num_actions: 12
+  action_observation_size: 18
+  actions_observation_dim: 18
+  action_observation_pad_value: 0.0
+  action_output_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  clip_actions_lower: [-100.0, -100.0, -100.0,
+                       -100.0, -100.0, -100.0,
+                       -100.0, -100.0, -100.0,
+                       -100.0, -100.0, -100.0]
+  clip_actions_upper: [100.0, 100.0, 100.0,
+                       100.0, 100.0, 100.0,
+                       100.0, 100.0, 100.0,
+                       100.0, 100.0, 100.0]
+  action_scale: [0.18, 0.32, 0.32,
+                 0.18, 0.32, 0.32,
+                 0.18, 0.32, 0.32,
+                 0.18, 0.32, 0.32]
+
+  rl_kp: [32.0, 32.0, 36.0,
+          32.0, 32.0, 36.0,
+          32.0, 32.0, 36.0,
+          32.0, 32.0, 36.0,
+          100.0, 100.0, 100.0,
+          20.0, 20.0, 5.0]
+  rl_kd: [0.8, 0.8, 0.9,
+          0.8, 0.8, 0.9,
+          0.8, 0.8, 0.9,
+          0.8, 0.8, 0.9,
+          3.0, 3.0, 3.0,
+          2.0, 1.0, 0.5]
+  fixed_kp: [80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             30.0, 30.0, 30.0,
+             30.0, 30.0, 30.0]
+  fixed_kd: [3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0]
+  torque_limits: [35.278, 35.278, 44.4,
+                  35.278, 35.278, 44.4,
+                  35.278, 35.278, 44.4,
+                  35.278, 35.278, 44.4,
+                  20.0, 20.0, 15.0,
+                  7.0, 5.0, 5.0]
+  wheel_indices: []
+  lin_vel_scale: 2.0
+  ang_vel_scale: 0.25
+  dof_pos_scale: 1.0
+  dof_vel_scale: 0.05
+  commands_scale: [1.0, 1.0, 1.0]
+  cmd_vel_alpha: 0.2
+  fixed_cmd_x: 0.5
+  fixed_cmd_y: 0.0
+  fixed_cmd_yaw: 0.0
+  default_dof_pos: [0.10, 0.80, -1.50,
+                    -0.10, 0.80, -1.50,
+                    0.10, 1.00, -1.50,
+                    -0.10, 1.00, -1.50,
+                    0.00, 0.30, 0.50,
+                    0.00, 0.00, 0.00]
+  joint_mapping: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  joint_names: ["FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+                "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+                "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+                "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+                "arm_joint1", "arm_joint2", "arm_joint3",
+                "arm_joint4", "arm_joint5", "arm_joint6"]
+  init_base_height: 0.45
+
+  arm_command_size: 6
+  arm_joint_command_topic: "/arm_joint_pos_cmd"
+  arm_control_mode: "split"
+  arm_joint_start_index: 12
+  arm_joint_count: 6
+  arm_bridge_cmd_topic: "/arx_x5/joint_cmd"
+  arm_bridge_state_topic: "/arx_x5/joint_state"
+  arm_bridge_require_state: true
+  arm_bridge_state_timeout_sec: 0.25
+  arm_hold_enabled: true
+  arm_lock: false
+  arm_lock_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  arm_lock_base_on_pose: false
+  fixed_cmd_arm_joint_command: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  arm_hold_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  arm_track_kp: [100.0, 100.0, 100.0, 20.0, 20.0, 5.0]
+  arm_track_kd: [3.0, 3.0, 3.0, 2.0, 1.0, 0.5]
+  arm_command_smoothing_time: 15.0
+  arm_output_filter_alpha: 0.02
+  arm_output_max_delta: 0.015
+  arm_key_pose: [0.0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_sequence_interval: 2.0
+  arm_sequence_steps: 4
+  arm_sequence: [0.00, 0.00, 0.00, 0.00, 0.00, 0.00,
+                 0.60, 3.00, 1.00, 0.20, 0.00, 0.00,
+                 0.20, 1.00, 1.40, -0.20, 0.00, 0.00,
+                 -1.70, 1.40, 2.30, 0.00, 0.43, 0.43]
+  gripper_command_size: 1
+  gripper_command_default: 0.0
+
+  sim2sim_action_delay_steps: 1
+  sim2sim_action_hold_prob: 0.05
+  sim2sim_action_noise_std: 0.0

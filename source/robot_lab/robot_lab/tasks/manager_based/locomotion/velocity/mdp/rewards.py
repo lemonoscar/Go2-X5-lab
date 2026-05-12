@@ -252,6 +252,308 @@ class GaitReward(ManagerTermBase):
         return torch.exp(-(se_act_0 + se_act_1) / self.std)
 
 
+def _reward_upright_scale(env: ManagerBasedRLEnv) -> torch.Tensor:
+    return torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+
+
+def _motion_gate(
+    env: ManagerBasedRLEnv,
+    asset: Articulation | RigidObject,
+    command_name: str,
+    command_threshold: float,
+    velocity_threshold: float,
+) -> torch.Tensor:
+    cmd = torch.linalg.norm(env.command_manager.get_command(command_name), dim=1)
+    body_vel = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1)
+    return torch.logical_or(cmd > command_threshold, body_vel > velocity_threshold)
+
+
+def _crawl_phase(
+    env: ManagerBasedRLEnv,
+    foot_count: int,
+    cycle_time: float,
+    swing_start_fraction: float,
+    swing_end_fraction: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    phase = torch.remainder(env.episode_length_buf.to(torch.float32) * env.step_dt / max(cycle_time, 1e-6), 1.0)
+    phase_scaled = phase * foot_count
+    swing_index = torch.clamp(phase_scaled.to(torch.long), max=foot_count - 1)
+    phase_progress = torch.remainder(phase_scaled, 1.0)
+    swing_active = (phase_progress >= swing_start_fraction) & (phase_progress <= swing_end_fraction)
+    return swing_index, swing_active, phase_progress
+
+
+def _ordered_body_ids(entity, foot_names: list[str]) -> list[int]:
+    body_ids = []
+    for foot_name in foot_names:
+        ids = entity.find_bodies(foot_name)[0]
+        if len(ids) != 1:
+            raise ValueError(f"Expected exactly one body for foot name {foot_name!r}, got {ids}.")
+        body_ids.append(ids[0])
+    return body_ids
+
+
+class CrawlGaitReward(ManagerTermBase):
+    """Reward a static crawl gait: one swing foot, three stance feet."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        self.foot_names = list(cfg.params["foot_names"])
+        self.foot_ids = _ordered_body_ids(self.contact_sensor, self.foot_names)
+        self.foot_count = len(self.foot_ids)
+        if self.foot_count != 4:
+            raise ValueError("CrawlGaitReward expects exactly four feet.")
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        foot_names: list[str],
+        cycle_time: float,
+        swing_start_fraction: float,
+        swing_end_fraction: float,
+        command_threshold: float,
+        velocity_threshold: float,
+        contact_force_threshold: float,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        del foot_names, sensor_cfg, asset_cfg
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.foot_ids, :]
+        contact = contact_forces.norm(dim=-1).max(dim=1)[0] > contact_force_threshold
+        swing_index, swing_active, _ = _crawl_phase(
+            env, self.foot_count, cycle_time, swing_start_fraction, swing_end_fraction
+        )
+
+        foot_range = torch.arange(self.foot_count, device=env.device).unsqueeze(0)
+        expected_air = (foot_range == swing_index.unsqueeze(1)) & swing_active.unsqueeze(1)
+        expected_contact = ~expected_air
+
+        contact_match = torch.where(expected_contact, contact, ~contact).to(torch.float32).mean(dim=1)
+        stance_count = torch.sum(contact & expected_contact, dim=1)
+        air_count = torch.sum(~contact, dim=1)
+        stance_ok = stance_count >= 3
+        swing_ok = torch.where(swing_active, air_count == 1, air_count <= 1)
+
+        reward = contact_match * stance_ok.to(torch.float32) * swing_ok.to(torch.float32)
+        reward *= _motion_gate(env, self.asset, command_name, command_threshold, velocity_threshold)
+        reward *= _reward_upright_scale(env)
+        return reward
+
+
+class CrawlSupportPolygonReward(ManagerTermBase):
+    """Reward the root projection staying inside the three-foot support triangle."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        self.foot_names = list(cfg.params["foot_names"])
+        self.sensor_foot_ids = _ordered_body_ids(self.contact_sensor, self.foot_names)
+        self.asset_foot_ids = _ordered_body_ids(self.asset, self.foot_names)
+        self.foot_count = len(self.asset_foot_ids)
+        if self.foot_count != 4:
+            raise ValueError("CrawlSupportPolygonReward expects exactly four feet.")
+
+    @staticmethod
+    def _triangle_margin(point: torch.Tensor, triangle: torch.Tensor) -> torch.Tensor:
+        a = triangle[:, 0, :]
+        b = triangle[:, 1, :]
+        c = triangle[:, 2, :]
+        v0 = c - a
+        v1 = b - a
+        v2 = point - a
+        dot00 = torch.sum(v0 * v0, dim=1)
+        dot01 = torch.sum(v0 * v1, dim=1)
+        dot02 = torch.sum(v0 * v2, dim=1)
+        dot11 = torch.sum(v1 * v1, dim=1)
+        dot12 = torch.sum(v1 * v2, dim=1)
+        denom = torch.clamp(dot00 * dot11 - dot01 * dot01, min=1e-6)
+        u = (dot11 * dot02 - dot01 * dot12) / denom
+        v = (dot00 * dot12 - dot01 * dot02) / denom
+        return torch.minimum(torch.minimum(u, v), 1.0 - u - v)
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        foot_names: list[str],
+        cycle_time: float,
+        swing_start_fraction: float,
+        swing_end_fraction: float,
+        command_threshold: float,
+        velocity_threshold: float,
+        contact_force_threshold: float,
+        margin_scale: float,
+        outside_penalty_scale: float,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        del foot_names, sensor_cfg, asset_cfg
+        foot_xy = self.asset.data.body_pos_w[:, self.asset_foot_ids, :2]
+        point = self.asset.data.root_pos_w[:, :2]
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.sensor_foot_ids, :]
+        contact = contact_forces.norm(dim=-1).max(dim=1)[0] > contact_force_threshold
+        swing_index, swing_active, _ = _crawl_phase(
+            env, self.foot_count, cycle_time, swing_start_fraction, swing_end_fraction
+        )
+
+        per_swing_reward = []
+        per_swing_contact = []
+        for swing_foot in range(self.foot_count):
+            stance_ids = [idx for idx in range(self.foot_count) if idx != swing_foot]
+            margin = self._triangle_margin(point, foot_xy[:, stance_ids, :])
+            inside_score = torch.clamp(margin / max(margin_scale, 1e-6), min=0.0, max=1.0)
+            outside_score = -outside_penalty_scale * torch.clamp(-margin / max(margin_scale, 1e-6), min=0.0, max=1.0)
+            per_swing_reward.append(torch.where(margin >= 0.0, inside_score, outside_score))
+            per_swing_contact.append(contact[:, stance_ids].to(torch.float32).mean(dim=1))
+
+        reward_by_swing = torch.stack(per_swing_reward, dim=1)
+        contact_by_swing = torch.stack(per_swing_contact, dim=1)
+        gather_ids = swing_index.unsqueeze(1)
+        reward = torch.gather(reward_by_swing, 1, gather_ids).squeeze(1)
+        stance_contact = torch.gather(contact_by_swing, 1, gather_ids).squeeze(1)
+
+        reward *= stance_contact
+        reward *= swing_active.to(torch.float32)
+        reward *= _motion_gate(env, self.asset, command_name, command_threshold, velocity_threshold)
+        reward *= _reward_upright_scale(env)
+        return reward
+
+
+class CrawlSwingClearanceReward(ManagerTermBase):
+    """Reward the scheduled swing foot clearing the ground instead of dragging."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        self.foot_names = list(cfg.params["foot_names"])
+        self.sensor_foot_ids = _ordered_body_ids(self.contact_sensor, self.foot_names)
+        self.asset_foot_ids = _ordered_body_ids(self.asset, self.foot_names)
+        self.foot_count = len(self.asset_foot_ids)
+        if self.foot_count != 4:
+            raise ValueError("CrawlSwingClearanceReward expects exactly four feet.")
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        foot_names: list[str],
+        cycle_time: float,
+        swing_start_fraction: float,
+        swing_end_fraction: float,
+        target_clearance: float,
+        clearance_std: float,
+        command_threshold: float,
+        velocity_threshold: float,
+        contact_force_threshold: float,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        del foot_names, sensor_cfg, asset_cfg
+        swing_index, swing_active, _ = _crawl_phase(
+            env, self.foot_count, cycle_time, swing_start_fraction, swing_end_fraction
+        )
+        foot_z = self.asset.data.body_pos_w[:, self.asset_foot_ids, 2]
+        swing_z = torch.gather(foot_z, 1, swing_index.unsqueeze(1)).squeeze(1)
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.sensor_foot_ids, :]
+        contact = contact_forces.norm(dim=-1).max(dim=1)[0] > contact_force_threshold
+        swing_contact = torch.gather(contact, 1, swing_index.unsqueeze(1)).squeeze(1)
+
+        clearance_error = torch.square(swing_z - target_clearance)
+        reward = torch.exp(-clearance_error / max(clearance_std**2, 1e-6))
+        reward *= (~swing_contact).to(torch.float32)
+        reward *= swing_active.to(torch.float32)
+        reward *= _motion_gate(env, self.asset, command_name, command_threshold, velocity_threshold)
+        reward *= _reward_upright_scale(env)
+        return reward
+
+
+class CrawlStrideLengthReward(ManagerTermBase):
+    """Reward forward touchdown displacement for the scheduled crawl swing foot."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        self.foot_names = list(cfg.params["foot_names"])
+        self.sensor_foot_ids = _ordered_body_ids(self.contact_sensor, self.foot_names)
+        self.asset_foot_ids = _ordered_body_ids(self.asset, self.foot_names)
+        self.foot_count = len(self.asset_foot_ids)
+        if self.foot_count != 4:
+            raise ValueError("CrawlStrideLengthReward expects exactly four feet.")
+        self._liftoff_pos_w = torch.zeros((env.num_envs, self.foot_count, 2), device=env.device)
+        self._was_contact = torch.zeros((env.num_envs, self.foot_count), dtype=torch.bool, device=env.device)
+        self._initialized = False
+
+    def reset(self, env_ids: torch.Tensor | slice | None = None):
+        if env_ids is None:
+            env_ids = slice(None)
+        self._liftoff_pos_w[env_ids] = 0.0
+        self._was_contact[env_ids] = False
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        foot_names: list[str],
+        cycle_time: float,
+        swing_start_fraction: float,
+        swing_end_fraction: float,
+        target_stride: float,
+        stride_std: float,
+        short_stride_penalty_scale: float,
+        command_threshold: float,
+        velocity_threshold: float,
+        contact_force_threshold: float,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        del foot_names, sensor_cfg, asset_cfg
+        foot_xy = self.asset.data.body_pos_w[:, self.asset_foot_ids, :2]
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.sensor_foot_ids, :]
+        contact = contact_forces.norm(dim=-1).max(dim=1)[0] > contact_force_threshold
+
+        if not self._initialized:
+            self._liftoff_pos_w.copy_(foot_xy)
+            self._was_contact.copy_(contact)
+            self._initialized = True
+
+        episode_start = env.episode_length_buf <= 1
+        if torch.any(episode_start):
+            self._liftoff_pos_w[episode_start] = foot_xy[episode_start]
+            self._was_contact[episode_start] = contact[episode_start]
+
+        first_air = (~contact) & self._was_contact
+        if torch.any(first_air):
+            self._liftoff_pos_w[first_air] = foot_xy[first_air]
+
+        first_contact = contact & ~self._was_contact
+        swing_index, _, _ = _crawl_phase(
+            env, self.foot_count, cycle_time, swing_start_fraction, swing_end_fraction
+        )
+        foot_range = torch.arange(self.foot_count, device=env.device).unsqueeze(0)
+        expected_touchdown = first_contact & (foot_range == swing_index.unsqueeze(1))
+
+        stride_w = foot_xy - self._liftoff_pos_w
+        yaw = math_utils.euler_xyz_from_quat(self.asset.data.root_quat_w)[2]
+        stride_x_b = torch.cos(yaw).unsqueeze(1) * stride_w[:, :, 0] + torch.sin(yaw).unsqueeze(1) * stride_w[:, :, 1]
+        stride_x = torch.sum(torch.clamp(stride_x_b, min=0.0) * expected_touchdown.to(torch.float32), dim=1)
+
+        stride_score = torch.exp(-torch.square(stride_x - target_stride) / max(stride_std**2, 1e-6))
+        short_penalty = short_stride_penalty_scale * torch.clamp((target_stride - stride_x) / max(target_stride, 1e-6), 0.0, 1.0)
+        touched = torch.any(expected_touchdown, dim=1)
+        reward = torch.where(touched, stride_score - short_penalty, torch.zeros_like(stride_score))
+
+        self._was_contact.copy_(contact)
+        reward *= _motion_gate(env, self.asset, command_name, command_threshold, velocity_threshold)
+        reward *= _reward_upright_scale(env)
+        return reward
+
+
 def joint_mirror(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg, mirror_joints: list[list[str]]) -> torch.Tensor:
     # extract the used quantities (to enable type-hinting)
     asset: Articulation = env.scene[asset_cfg.name]

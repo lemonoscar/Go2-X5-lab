@@ -565,6 +565,81 @@ class RewardsCfg:
         },
     )
 
+    crawl_gait = RewTerm(
+        func=mdp.CrawlGaitReward,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "foot_names": ["RL_foot", "FL_foot", "RR_foot", "FR_foot"],
+            "cycle_time": 1.20,
+            "swing_start_fraction": 0.12,
+            "swing_end_fraction": 0.82,
+            "command_threshold": 0.08,
+            "velocity_threshold": 0.12,
+            "contact_force_threshold": 1.0,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+        },
+    )
+
+    crawl_support_polygon = RewTerm(
+        func=mdp.CrawlSupportPolygonReward,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "foot_names": ["RL_foot", "FL_foot", "RR_foot", "FR_foot"],
+            "cycle_time": 1.20,
+            "swing_start_fraction": 0.12,
+            "swing_end_fraction": 0.82,
+            "command_threshold": 0.08,
+            "velocity_threshold": 0.12,
+            "contact_force_threshold": 1.0,
+            "margin_scale": 0.08,
+            "outside_penalty_scale": 0.5,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+        },
+    )
+
+    crawl_swing_clearance = RewTerm(
+        func=mdp.CrawlSwingClearanceReward,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "foot_names": ["RL_foot", "FL_foot", "RR_foot", "FR_foot"],
+            "cycle_time": 1.20,
+            "swing_start_fraction": 0.12,
+            "swing_end_fraction": 0.82,
+            "target_clearance": 0.12,
+            "clearance_std": 0.035,
+            "command_threshold": 0.08,
+            "velocity_threshold": 0.12,
+            "contact_force_threshold": 1.0,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+        },
+    )
+
+    crawl_stride_length = RewTerm(
+        func=mdp.CrawlStrideLengthReward,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "foot_names": ["RL_foot", "FL_foot", "RR_foot", "FR_foot"],
+            "cycle_time": 1.20,
+            "swing_start_fraction": 0.12,
+            "swing_end_fraction": 0.82,
+            "target_stride": 0.22,
+            "stride_std": 0.08,
+            "short_stride_penalty_scale": 0.35,
+            "command_threshold": 0.08,
+            "velocity_threshold": 0.12,
+            "contact_force_threshold": 1.0,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+        },
+    )
+
     feet_contact = RewTerm(
         func=mdp.feet_contact,
         weight=0.0,

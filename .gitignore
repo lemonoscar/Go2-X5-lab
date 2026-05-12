@@ -53,6 +53,16 @@ modelscope/
 models/
 *.npz
 
+# Documentation publish allow-list
+# Only README.md and requirements.txt are intended to be pushed from the repo root.
+# Current docs are pushed from docs/README.md, docs/Readme_CN.md,
+# docs/user, and stable appendix images. docs/development is local only.
+*.md
+*.txt
+README
+!/README.md
+!/requirements.txt
+
 # Development / AI collaboration notes
 AGENT.md
 AGENTS.md
@@ -70,9 +80,37 @@ train_route/
 docs/README.full-preserved.md
 **/.cursorrules
 **/.windsurfrules
+**/.agents/
+**/.codex/
 
-# Keep user-facing entry files visible
-!README.md
+# Documentation publishing policy
+# Push current user docs and public indexes. Keep development, history, training,
+# runtime screenshots, and other working notes local.
 !docs/
-!docs/imgs/
-!docs/imgs/**
+docs/*
+!docs/README.md
+!docs/Readme_CN.md
+!docs/appends/
+docs/appends/*
+!docs/appends/images/
+!docs/appends/images/**
+!docs/user/
+!docs/user/**
+docs/development/
+docs/history/
+docs/train/
+docs/appends/media/
+
+# Sim2sim workspace generated outputs and local binary payloads.
+!sim2sim/
+!sim2sim/README.md
+sim2sim/build/
+sim2sim/install/
+sim2sim/log/
+sim2sim/logs/
+sim2sim/devel/
+sim2sim/cmake_build*/
+sim2sim/.catkin_tools/
+sim2sim/library/
+sim2sim/policy/**/*.pt
+sim2sim/policy/**/*.onnx

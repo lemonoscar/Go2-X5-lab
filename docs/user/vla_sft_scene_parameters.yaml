@@ -1,0 +1,489 @@
+# Go2-X5 VLA-SFT 场景参数配置
+# 每个场景的具体参数定义
+
+# ============================================================
+# Layer 1: 基础抓取场景 (Basic Grasp)
+# ============================================================
+layer1_basic:
+  description: "基础抓取能力训练 - 学习 grasp primitives"
+
+  # A1: 单物体地面抓取
+  a1_ground_grasp:
+    name: "single_object_ground_grasp"
+    count: 10
+    object_types:
+      - cube
+      - sphere
+      - cylinder
+      - rectangular_block
+    size_range: [0.03, 0.08]  # 物体尺寸范围 (m)
+    position_range:
+      x: [-0.15, 0.15]
+      y: [-0.25, 0.0]
+      z: [0.02, 0.05]
+    orientation_range:
+      roll: [0.0, 0.0]
+      pitch: [0.0, 0.0]
+      yaw: [-3.14159, 3.14159]
+    base_init_pose:
+      x: [0.0, 0.0]
+      y: [0.0, 0.0]
+      yaw: [0.0, 0.0]
+    clutter_enabled: false
+    instructions:
+      - "pick up the {object} from the ground"
+      - "grasp the {object}"
+      - "collect the {object} from the floor"
+
+  # A2: 单物体桌面抓取
+  a2_table_grasp:
+    name: "single_object_table_grasp"
+    count: 10
+    object_types:
+      - cube
+      - sphere
+      - cylinder
+      - bowl
+      - cup
+    size_range: [0.03, 0.06]
+    table_height: 0.74
+    position_range:
+      x: [-0.20, 0.20]
+      y: [0.35, 0.55]
+      z: [0.76, 0.80]
+    orientation_range:
+      roll: [0.0, 0.0]
+      pitch: [0.0, 0.0]
+      yaw: [-3.14159, 3.14159]
+    base_init_pose:
+      x: [0.0, 0.0]
+      y: [0.0, 0.0]
+      yaw: [0.0, 0.0]
+    clutter_enabled: false
+    instructions:
+      - "pick up the {object} from the table"
+      - "grasp the {object} on the table"
+      - "take the {object} from the table"
+
+  # A3: 多物体简单 clutter
+  a3_simple_clutter:
+    name: "multi_object_simple_clutter"
+    count: 10
+    target_object_types:
+      - cube
+      - sphere
+      - cylinder
+    distractor_object_types:
+      - cube
+      - sphere
+      - cylinder
+      - small_block
+    target_size_range: [0.04, 0.06]
+    distractor_size_range: [0.02, 0.04]
+    clutter_count_range: [3, 5]
+    position_range:
+      x: [-0.20, 0.20]
+      y: [-0.25, 0.20]
+      z: [0.02, 0.05]
+    orientation_range:
+      yaw: [-3.14159, 3.14159]
+    base_init_pose:
+      x: [0.0, 0.0]
+      y: [0.0, 0.0]
+      yaw: [0.0, 0.0]
+    clutter_enabled: true
+    instructions:
+      - "pick up the {target_object} among the other objects"
+      - "grasp the {target_object} from the cluttered table"
+      - "find and collect the {target_object}"
+
+# ============================================================
+# Layer 2: 移动抓取场景 (Mobile Grasp)
+# ============================================================
+layer2_mobile:
+  description: "移动抓取 - 学习 navigation + grasp coupling"
+
+  # B1: 开阔空间抓取
+  b1_open_floor:
+    name: "open_floor_navigation_grasp"
+    count: 10
+    object_types:
+      - cube
+      - sphere
+      - cylinder
+    size_range: [0.04, 0.06]
+    target_distance_range: [1.0, 2.5]  # 目标距离 (m)
+    target_angle_range: [-1.57, 1.57]  # 目标角度 (rad)
+    position_range:
+      x: [-1.0, 1.0]
+      y: [0.5, 2.5]
+      z: [0.02, 0.05]
+    orientation_range:
+      yaw: [-3.14159, 3.14159]
+    base_init_pose:
+      x: [0.0, 0.5]
+      y: [-0.5, 0.5]
+      yaw: [-0.5, 0.5]
+    clutter_enabled: false
+    navigation_required: true
+    instructions:
+      - "navigate to the {object} and pick it up"
+      - "go to the {object} and grasp it"
+      - "move towards the {object} and collect it"
+
+  # B2: 桌面接近抓取
+  b2_table_approach:
+    name: "constrained_table_approach"
+    count: 10
+    object_types:
+      - cube
+      - sphere
+      - cup
+      - bowl
+    size_range: [0.03, 0.05]
+    table_height: 0.74
+    table_position: [0.0, 0.5]
+    position_range:
+      x: [-0.15, 0.15]
+      y: [0.4, 0.6]
+      z: [0.76, 0.80]
+    orientation_range:
+      yaw: [-3.14159, 3.14159]
+    base_init_pose:
+      x: [-0.5, 0.5]
+      y: [-0.5, 0.0]
+      yaw: [-1.57, 1.57]
+    approach_constrained: true
+    clutter_enabled: false
+    instructions:
+      - "approach the table and pick up the {object}"
+      - "go to the table and grasp the {object}"
+      - "move to the table and collect the {object}"
+
+  # B3: 轻度障碍绕行
+  b3_obstacle_avoidance:
+    name: "obstacle_navigation_grasp"
+    count: 10
+    object_types:
+      - cube
+      - sphere
+    size_range: [0.04, 0.06]
+    target_distance_range: [1.5, 3.0]
+    obstacle_count_range: [2, 4]
+    obstacle_types:
+      - box
+      - cylinder_barrier
+    obstacle_size_range: [0.1, 0.3]
+    position_range:
+      x: [-1.0, 1.0]
+      y: [0.5, 2.5]
+      z: [0.02, 0.05]
+    base_init_pose:
+      x: [0.0, 0.5]
+      y: [-0.5, 0.5]
+      yaw: [-0.5, 0.5]
+    navigation_required: true
+    path_planning_required: true
+    instructions:
+      - "navigate around the obstacles to get the {object}"
+      - "avoid the obstacles and pick up the {object}"
+      - "go around the barriers and grasp the {object}"
+
+  # B4: 半遮挡抓取
+  b4_partial_occlusion:
+    name: "partially_occluded_grasp"
+    count: 10
+    object_types:
+      - cube
+      - sphere
+      - cylinder
+    size_range: [0.04, 0.06]
+    occlusion_ratio_range: [0.3, 0.6]  # 遮挡比例
+    occluder_types:
+      - box
+      - tall_block
+    position_range:
+      x: [-0.2, 0.2]
+      y: [0.3, 0.8]
+      z: [0.02, 0.05]
+    base_init_pose:
+      x: [0.0, 0.3]
+      y: [0.0, 0.3]
+      yaw: [-0.5, 0.5]
+    clutter_enabled: false
+    instructions:
+      - "pick up the partially hidden {object}"
+      - "grasp the {object} behind the obstacle"
+      - "reach and collect the {object}"
+
+# ============================================================
+# Layer 3: 交互操作场景 (Interaction)
+# ============================================================
+layer3_interaction:
+  description: "交互操作 - 学习 contact-rich manipulation"
+
+  # C1: 抽屉操作
+  c1_drawer:
+    name: "drawer_open"
+    count: 10
+    furniture_type: "drawer"
+    drawer_types:
+      - horizontal_drawer
+      - vertical_drawer
+    handle_types:
+      - knob_handle
+      - bar_handle
+    drawer_height_range: [0.5, 1.0]  # 抽屉高度
+    damping_range: [0.1, 5.0]  # 阻尼系数
+    required_force_range: [5, 20]  # 所需力 (N)
+    position_range:
+      x: [0.3, 0.6]
+      y: [0.0, 0.3]
+    base_init_pose:
+      x: [0.0, 0.2]
+      y: [-0.2, 0.0]
+      yaw: [0.0, 0.5]
+    keypoints_required: true
+    instructions:
+      - "open the drawer"
+      - "pull open the {drawer_type}"
+      - "slide the drawer out"
+
+  # C2: 柜门操作
+  c2_cabinet_door:
+    name: "cabinet_door_open"
+    count: 10
+    furniture_type: "cabinet"
+    door_types:
+      - hinged_door_left
+      - hinged_door_right
+      - double_door
+    handle_types:
+      - knob_handle
+      - bar_handle
+      - recessed_handle
+    door_height_range: [0.6, 1.2]
+    hinge_damping_range: [0.5, 3.0]
+    required_torque_range: [2, 10]  # 所需扭矩 (Nm)
+    position_range:
+      x: [0.4, 0.7]
+      y: [0.0, 0.3]
+    base_init_pose:
+      x: [0.0, 0.2]
+      y: [-0.2, 0.0]
+      yaw: [0.0, 0.5]
+    keypoints_required: true
+    instructions:
+      - "open the cabinet door"
+      - "pull open the {door_type}"
+      - "unlock and open the door"
+
+  # C3: 推拉物体
+  c3_push_pull:
+    name: "push_pull_object"
+    count: 10
+    object_types:
+      - box
+      - container
+      - tray
+    size_range: [0.08, 0.15]
+    mass_range: [0.1, 0.5]  # 质量
+    friction_range: [0.3, 0.8]  # 摩擦系数
+    target_distance_range: [0.2, 0.5]
+    action_type:
+      - push
+      - pull
+    position_range:
+      x: [0.3, 0.6]
+      y: [-0.1, 0.2]
+    base_init_pose:
+      x: [0.0, 0.2]
+      y: [-0.2, 0.0]
+      yaw: [-0.3, 0.3]
+    force_threshold: 10  # N
+    instructions:
+      - "push the {object} forward"
+      - "pull the {object} towards you"
+      - "slide the {object} to the {location}"
+
+  # C4: 狭窄空间抓取
+  c4_constrained_space:
+    name: "constrained_space_grasp"
+    count: 10
+    space_types:
+      - cabinet_interior
+      - shelf
+      - narrow_opening
+    object_types:
+      - cube
+      - cylinder
+      - small_object
+    size_range: [0.02, 0.04]
+    workspace_radius_range: [0.2, 0.3]
+    opening_size_range: [0.15, 0.25]
+    position_range:
+      x: [0.4, 0.7]
+      y: [0.0, 0.2]
+      z: [0.3, 0.8]
+    base_init_pose:
+      x: [0.0, 0.2]
+      y: [-0.2, 0.0]
+      yaw: [-0.2, 0.2]
+    precision_required: true
+    instructions:
+      - "pick up the {object} from inside the cabinet"
+      - "grasp the {object} in the narrow space"
+      - "reach in and collect the {object}"
+
+# ============================================================
+# Layer 4: 泛化测试场景 (OOD Benchmark)
+# ============================================================
+layer4_od:
+  description: "泛化测试 - 不参与训练，仅用于评测"
+
+  # D1: Unseen layout
+  d1_unseen_layout:
+    name: "unseen_room_layout"
+    count: 5
+    description: "测试对新房间结构的泛化"
+    layout_types:
+      - l_shaped_room
+      - narrow_corridor
+      - obstacle_wall
+    object_types:
+      - cube
+      - sphere
+    size_range: [0.04, 0.06]
+    instructions:
+      - "pick up the {object} in this new room layout"
+      - "grasp the {object} despite the unusual room configuration"
+
+  # D2: Unseen object
+  d2_unseen_object:
+    name: "unseen_object_category"
+    count: 5
+    description: "测试对新物体类别的泛化"
+    unseen_object_types:
+      - pyramid
+      - cone
+      - torus
+      - irregular_shape
+    size_range: [0.04, 0.06]
+    instructions:
+      - "pick up the unfamiliar object"
+      - "grasp the {object_type}"
+
+  # D3: Unseen clutter pattern
+  d3_unseen_clutter:
+    name: "unseen_clutter_pattern"
+    count: 5
+    description: "测试对新障碍分布的泛化"
+    target_object_types:
+      - cube
+    distractor_count_range: [10, 15]  # 比训练时更多
+    distractor_arrangement:
+      - circular_pattern
+      - random_dense
+      - wall_pattern
+    instructions:
+      - "pick up the {target_object} in this heavily cluttered scene"
+      - "find and grasp the {target_object} among many objects"
+
+  # D4: Compositional task
+  d4_compositional:
+    name: "compositional_task"
+    count: 5
+    description: "测试多步骤任务组合的泛化"
+    task_sequences:
+      - pick_and_place:
+          - pick_up_object
+          - navigate_to_location
+          - place_object
+      - open_and_retrieve:
+          - open_drawer
+          - pick_object_inside
+          - close_drawer
+      - push_and_place:
+          - push_object
+          - navigate_around
+          - pick_up_object
+    instructions:
+      - "pick up the {object} and place it in the {location}"
+      - "open the drawer, get the {object}, and close it"
+      - "push the {obstacle} aside, then collect the {object}"
+
+# ============================================================
+# 全局随机化配置
+# ============================================================
+randomization:
+  # 物体属性随机化
+  object_properties:
+    color_variation: true
+    texture_variation: true
+    mass_variation_range: [0.8, 1.2]  # 相对于基准质量的倍数
+    friction_variation_range: [0.5, 1.0]
+
+  # 环境随机化
+  environment:
+    lighting_variation: true
+    lighting_intensity_range: [0.8, 1.2]
+    background_texture_variation: false  # VLA 训练时保持背景一致
+
+  # 传感器噪声
+  sensor_noise:
+    camera_noise: true
+    camera_noise_type: "gaussian"
+    camera_noise_std: 0.01
+    proprio_noise: true
+    proprio_noise_std: 0.001
+
+  # 物理参数随机化
+  physics:
+    timestep_variation: false  # 保持物理仿真稳定
+    solver_iteration_range: [4, 8]
+
+# ============================================================
+# 数据采集配置
+# ============================================================
+data_collection:
+  # 输出配置
+  output_dir: "./data/vla_sft"
+  save_images: true
+  image_format: "png"
+  image_quality: 95
+
+  # 采集频率
+  control_frequency: 20  # Hz
+  save_frequency: 1  # 保存所有帧
+
+  # Episode 配置
+  max_episode_length: 300  # steps
+  early_termination_on_success: true
+
+  # 专家策略配置
+  expert_policy:
+    type: "mpc_ik"  # MPC + IK
+    planning_horizon: 10
+    ik_solver: "damped_ls"
+    ik_max_iterations: 100
+    ik_tolerance: 0.001
+
+# ============================================================
+# 物体描述模板 (用于指令生成)
+# ============================================================
+object_descriptions:
+  cube:
+    seen: ["cube", "block", "square block"]
+    unseen: ["hexagonal prism", "octahedron"]
+  sphere:
+    seen: ["ball", "sphere", "round object"]
+    unseen: ["ellipsoid", "hemisphere"]
+  cylinder:
+    seen: ["cylinder", "can", "cylindrical object"]
+    unseen: ["tube", "rounded column"]
+  cup:
+    seen: ["cup", "mug", "small container"]
+    unseen: ["goblet", "teacup"]
+  bowl:
+    seen: ["bowl", "dish", "round container"]
+    unseen: ["basin", "soup bowl"]

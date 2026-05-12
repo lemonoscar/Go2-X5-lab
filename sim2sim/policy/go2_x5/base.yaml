@@ -1,0 +1,62 @@
+# Copyright (c) 2024-2025 Ziqi Fan
+# SPDX-License-Identifier: Apache-2.0
+
+go2_x5:
+  dt: 0.005
+  decimation: 4
+  fixed_kp: [80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             80.0, 80.0, 80.0,
+             30.0, 30.0, 30.0,
+             30.0, 30.0, 30.0]
+  fixed_kd: [3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             3.0, 3.0, 3.0,
+             1.0, 1.0, 1.0,
+             1.0, 1.0, 1.0]
+  num_of_dofs: 18
+  wheel_indices: []
+  torque_limits: [23.5, 23.5, 23.5,
+                  23.5, 23.5, 23.5,
+                  23.5, 23.5, 23.5,
+                  23.5, 23.5, 23.5,
+                  15.0, 15.0, 15.0,
+                  15.0, 15.0, 15.0]
+  default_dof_pos: [ 0.10, 0.80, -1.50,
+                     -0.10, 0.80, -1.50,
+                     0.10, 1.00, -1.50,
+                     -0.10, 1.00, -1.50,
+                     0.00, 0.30, 0.50,
+                     0.00, 0.00, 0.00]
+  joint_names: ["FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+                "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+                "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+                "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+                "arm_joint1", "arm_joint2", "arm_joint3",
+                "arm_joint4", "arm_joint5", "arm_joint6"]
+  joint_controller_names: ["FR_hip_controller", "FR_thigh_controller", "FR_calf_controller",
+                           "FL_hip_controller", "FL_thigh_controller", "FL_calf_controller",
+                           "RR_hip_controller", "RR_thigh_controller", "RR_calf_controller",
+                           "RL_hip_controller", "RL_thigh_controller", "RL_calf_controller",
+                           "arm_joint1_controller", "arm_joint2_controller", "arm_joint3_controller",
+                           "arm_joint4_controller", "arm_joint5_controller", "arm_joint6_controller"]
+  joint_mapping: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  # arm_control_mode:
+  #   unitree -> single channel (all joints through unitree lowcmd)
+  #   split / arx_x5 / bridge -> leg(0..11) via unitree, arm via external bridge topic
+  arm_control_mode: "split"
+  arm_joint_start_index: 12
+  arm_joint_count: 6
+  arm_bridge_cmd_topic: "/arx_x5/joint_cmd"
+  arm_bridge_state_topic: "/arx_x5/joint_state"
+  arm_bridge_require_state: true
+  arm_bridge_state_timeout_sec: 0.25
+  arm_command_size: 6
+  arm_joint_command_topic: "/arm_joint_pos_cmd"
+  arm_hold_enabled: true
+  arm_hold_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  arm_key_pose: [0.0, 1.57, 1.57, 0.0, 0.0, 0.0]
+  arm_command_smoothing_time: 15.0
+  policy_inference_log_enabled: false

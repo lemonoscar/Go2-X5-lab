@@ -18,4 +18,9 @@ from .events import *  # noqa: F401, F403
 from .observations import *  # noqa: F401, F403
 from .rewards import *  # noqa: F401, F403
 from .terminations import *  # noqa: F401, F403
+from .umi_commands import *  # noqa: F401, F403
+from .umi_events import *  # noqa: F401, F403
+from .umi_observations import *  # noqa: F401, F403
+from .umi_rewards import *  # noqa: F401, F403
+from .umi_terminations import *  # noqa: F401, F403
 from .utils import *  # noqa: F401, F403

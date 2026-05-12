@@ -1,0 +1,10 @@
+go2_x5/dog_only_260x12:
+  policy_id: "go2_x5_dog_only_recover_big_stride_2026_04_19"
+  mode: "dog_only"
+  model_name: "policy.onnx"
+  observation_dim: 260
+  action_dim: 12
+  action_observation_dim: 18
+  source_policy: "logs/rsl_rl/go2_x5_dog_only_recover_flat/2026-04-19_07-04-41_big_stride_recover_from11000/exported/policy.onnx"
+  source_env: "logs/rsl_rl/go2_x5_dog_only_recover_flat/2026-04-19_07-04-41_big_stride_recover_from11000/params/env.yaml"
+  policy_sha256: "4aeaa56e48b38e3fd20436205a4aa286039b9fcc86dc2bab4a647dfb95762063"

@@ -1,173 +1,87 @@
 # Go2-X5-lab
 
-`Go2-X5-lab` 是一个面向 `Unitree Go2` 与 `Go2-X5` 的 Isaac Lab 扩展仓库，聚焦于四足 locomotion、带机械臂形态的 locomotion 训练，以及面向迁移鲁棒性的 sim2sim 配置。
-
+`Go2-X5-lab` is an Isaac Lab extension for Unitree Go2 and the Go2-X5 mobile manipulation platform. It contains locomotion tasks, Go2-X5 training routes, DogOnly low-level PPO control, UMI-style locomotion prototypes, and early tabletop / door manipulation task scaffolds.
 
 | Go2 | Go2-X5 |
 | --- | --- |
-| <img src="./docs/imgs/unitree_go2.png" alt="Unitree Go2" width="100%"> | <img src="./docs/imgs/go2-x5.png" alt="Go2-X5" width="100%"> |
-| 纯四足速度跟踪与地形 locomotion | 四足底盘 + 机械臂形态，支持 flat / rough / foundation / robust |
+| <img src="./docs/appends/images/unitree_go2.png" alt="Unitree Go2" width="100%"> | <img src="./docs/appends/images/go2-x5.png" alt="Go2-X5" width="100%"> |
+| Quadruped velocity tracking | Quadruped base with X5 arm |
 
-## 概览
+## Current Scope
 
-这个仓库覆盖的核心内容包括：
+- Go2 flat / rough velocity tracking with RSL-RL and optional CusRL entrypoints.
+- Go2-X5 locomotion on flat and rough terrain.
+- Go2-X5 DogOnly PPO: the policy outputs 12 leg actions; arm and gripper commands stay outside the PPO action head.
+- Training-stage records for foundation flat, rough transfer, and arm warmup.
+- UMI-style 18-DoF locomotion6D prototype environments.
+- Prototype tabletop reach and door-opening ManagerBased tasks with high-level `cmd_vel(3) + arm_joint_pos(6) + gripper(1)` action contracts.
+- VLA-SFT scene usage and visualization utilities.
 
-- `Go2` 平地与粗糙地形速度跟踪训练 / 回放
-- `Go2-X5` 平地与粗糙地形 locomotion 训练 / 回放
-- `Go2-X5` foundation / robust 训练路线
-- `Go2-X5` dog-only PPO 低层策略路线
-- Isaac Lab 中面向 sim2sim 的延迟、噪声与动力学扰动建模
-- Go2 / Go2-X5 资产的 URDF / MJCF 转 USD 工作流
+## Repository Layout
 
-当前低层策略范式说明见：
+| Path | Purpose |
+| --- | --- |
+| `source/robot_lab/robot_lab/assets` | Robot asset configuration for Go2 and Go2-X5. |
+| `source/robot_lab/robot_lab/tasks/manager_based/locomotion/velocity` | ManagerBased locomotion environments, MDP terms, and task registration. |
+| `source/robot_lab/robot_lab/tasks/manager_based/manipulation` | Ground-pick, VLA-SFT, tabletop, and door manipulation task code. |
+| `scripts/reinforcement_learning/rsl_rl` | RSL-RL train / play entrypoints. |
+| `scripts/reinforcement_learning/cusrl` | Optional CusRL train / play entrypoints. |
+| `scripts/maintenance` | Environment listing and cleanup helpers. |
+| `scripts/assets` | Asset conversion and render asset download helpers. |
+| `scripts/checkpoints` | Checkpoint migration helpers. |
+| `scripts/control` | Keyboard control scripts. |
+| `scripts/visualization` | Camera, ground-pick, and VLA-SFT visualization scripts. |
+| `docs/user` | Developer-facing setup, framework, training, replay, camera, keyboard, and VLA-SFT guides. |
+| `docs/train` | Local training reward / weight records. This directory is intentionally ignored by git. |
+| `docs/history` | Local expired notes and non-current training routes. Each file starts with an expiry notice. |
 
-- [newPPO.md](/home/lemon/Issac/Go2-X5-lab/newPPO.md)
+The full documentation map is in [docs/README.md](docs/README.md).
+The script directory index is in `scripts/INDEX`.
 
-## 快速开始
+## Environment
 
-### 1. 安装
-
-建议使用以下版本组合：
+Recommended base stack:
 
 - Python `3.11`
-- Isaac Lab `2.3.0`
 - Isaac Sim `5.1.0`
+- Isaac Lab `2.3.0`
+- CUDA-capable PyTorch stack compatible with the Isaac Lab environment
 
-安装扩展：
+Install the local extension:
 
 ```bash
+python -m pip install -r requirements.txt
 python -m pip install -e source/robot_lab
 ```
 
-### 2. 检查任务注册
+Optional CusRL support:
 
 ```bash
-python scripts/tools/list_envs.py
+python -m pip install -e "source/robot_lab[cusrl]"
 ```
 
-如果输出中能看到下面列出的 6 个任务，说明扩展安装和任务注册正常。
+Detailed setup is in [docs/user/environment.md](docs/user/environment.md).
 
-### 3. 直接训练
+## Main Task IDs
 
-Go2-X5 foundation flat：
+| Group | Task IDs |
+| --- | --- |
+| Go2 locomotion | `RobotLab-Isaac-Velocity-Flat-Unitree-Go2-v0`, `RobotLab-Isaac-Velocity-Rough-Unitree-Go2-v0` |
+| Go2-X5 baseline | `RobotLab-Isaac-Velocity-Flat-Go2-X5-v0`, `RobotLab-Isaac-Velocity-Rough-Go2-X5-v0` |
+| Go2-X5 staged training | `RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0`, `RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0`, `RobotLab-Isaac-Velocity-Rough-Go2-X5-ArmWarmup-v0` |
+| Go2-X5 DogOnly | `RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnly-v0`, `RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyArm-v0`, `RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyRecover-v0`, `RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnly-v0` |
+| UMI prototypes | `RobotLab-Isaac-Velocity-Flat-Go2-X5-UMI-Locomotion6D-v0`, `RobotLab-Isaac-Velocity-Rough-Go2-X5-UMI-Extreme-Locomotion6D-v0` |
+| Manipulation prototypes | `RobotLab-Isaac-GroundPick-Go2-X5-v0`, `RobotLab-Isaac-Go2-X5-Tabletop-Reach-v0`, `RobotLab-Isaac-Go2-X5-Door-v0` |
+
+Check local registration:
 
 ```bash
-python scripts/reinforcement_learning/rsl_rl/train.py \
-  --task=RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0 \
-  --headless
+python scripts/maintenance/list_envs.py
 ```
 
-### 4. 直接回放
+## Training
 
-```bash
-python scripts/reinforcement_learning/rsl_rl/play.py \
-  --task=RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0 \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt \
-  --num_envs=1
-```
-
-如果需要键盘控制单机器人，可追加：
-
-```bash
---keyboard
-```
-
-## 支持的任务
-
-当前注册的任务如下：
-
-| 机器人 | Task ID | 任务说明 |
-| --- | --- | --- |
-| Go2 | `RobotLab-Isaac-Velocity-Flat-Unitree-Go2-v0` | 平地速度跟踪 |
-| Go2 | `RobotLab-Isaac-Velocity-Rough-Unitree-Go2-v0` | 粗糙地形速度跟踪 |
-| Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-v0` | 平地 locomotion + arm 形态配置 |
-| Go2-X5 | `RobotLab-Isaac-Velocity-Rough-Go2-X5-v0` | 粗糙地形 locomotion + arm 形态配置 |
-| Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0` | foundation flat 路线，保留 arm 维度但固定默认位姿 |
-| Go2-X5 | `RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0` | P2a rough transfer 路线，保留 arm 维度但继续锁在默认位姿 |
-| Go2-X5 | `RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnly-v0` | dog-only 低层策略，PPO 只输出 12 维腿动作，arm 走独立命令 |
-
-相关环境注册入口位于：
-
-- `source/robot_lab/robot_lab/tasks/manager_based/locomotion/velocity/config/quadruped/unitree_go2`
-- `source/robot_lab/robot_lab/tasks/manager_based/locomotion/velocity/config/quadruped/go2_x5`
-
-## 常用脚本
-
-主要脚本入口如下：
-
-- `scripts/reinforcement_learning/rsl_rl/train.py`
-- `scripts/reinforcement_learning/rsl_rl/play.py`
-- `scripts/reinforcement_learning/rsl_rl/play_cs.py`
-- `scripts/reinforcement_learning/cusrl/train.py`
-- `scripts/reinforcement_learning/cusrl/play.py`
-- `scripts/tools/list_envs.py`
-- `scripts/tools/migrate_go2_x5_route_checkpoint.py`
-- `scripts/tools/convert_urdf.py`
-- `scripts/tools/convert_mjcf.py`
-- `scripts/tools/clean_trash.py`
-
-用途说明：
-
-- `rsl_rl/train.py`：RSL-RL 训练入口
-- `rsl_rl/play.py`：标准 checkpoint 回放入口
-- `rsl_rl/play_cs.py`：加载指定 USD 地图的定制回放入口
-- `cusrl/train.py` / `cusrl/play.py`：CusRL 工作流入口
-- `migrate_go2_x5_route_checkpoint.py`：把旧的 12-action route checkpoint 迁移到新的 arm-aware route 架构
-- `convert_urdf.py` / `convert_mjcf.py`：机器人描述文件转换为 USD
-
-## 当前 PPO 范式
-
-当前 `Go2-X5` 的主低层策略设计已经从 “whole-body 18 维 joint policy” 切换到结构化的 `DogOnly PPO` 范式。
-
-核心原则是：
-
-- PPO 只输出 `12` 维腿动作
-- 机械臂 `6` 维目标由 `arm_joint_pos` 命令独立驱动
-- `gripper` 作为上层任务接口显式保留，但当前仍是占位通道
-- 低层 PPO 的职责是底盘稳定、步态生成和 arm 扰动下的 base 补偿
-
-当前实际网络结构：
-
-- actor 输入：`260`
-- critic 输入：`260`
-- actor 输出：`12`
-- hidden dims：`[512, 256, 128]`
-- activation：`ELU`
-
-输入中的 `260` 维不是纯命令，而是：
-
-- 机器人当前状态
-- 加上高层任务命令
-
-逻辑上可以理解为：
-
-```text
-policy_input = robot_state_obs + task_command_obs
-```
-
-其中高层命令接口对应：
-
-- `cmd_vel`: `3`
-- `arm_pose`: `6`
-- `gripper`: `1`
-
-更完整的设计说明、封装边界以及面向 `UMI VLA` 的低层策略范式见：
-
-- [newPPO.md](/home/lemon/Issac/Go2-X5-lab/newPPO.md)
-
-## 训练与回放示例
-
-### RSL-RL 训练
-
-Go2 rough：
-
-```bash
-python scripts/reinforcement_learning/rsl_rl/train.py \
-  --task=RobotLab-Isaac-Velocity-Rough-Unitree-Go2-v0 \
-  --headless
-```
-
-Go2-X5 foundation flat：
+Foundation flat:
 
 ```bash
 python scripts/reinforcement_learning/rsl_rl/train.py \
@@ -175,152 +89,56 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
   --headless
 ```
 
-说明：
-
-- 这个阶段的 policy 仍然包含 arm 相关观测和动作维度。
-- 但 `arm_joint_pos` 命令被固定在默认位姿，目的是先学稳底盘，不丢掉后续开 arm 的网络形状。
-
-Go2-X5 P2a rough transfer 从 foundation checkpoint 热启动：
+Rough transfer from a foundation checkpoint:
 
 ```bash
 python scripts/reinforcement_learning/rsl_rl/train.py \
   --task=RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0 \
   --headless \
   --resume \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/<run>/model_<iter>.pt
 ```
 
-说明：
-
-- 这个阶段是纯 `flat -> rough` 迁移：rough terrain 打开，但 arm 仍然锁在默认位姿。
-- policy 维度保持不变，因此后续如果要做 `P2b` 再开 arm，不需要再改网络结构。
-
-如果你手里已经有旧架构的 `model_8000.pt`（旧 route 是 `235 -> 12`），先迁移再 resume：
-
-```bash
-python scripts/tools/migrate_go2_x5_route_checkpoint.py \
-  --input logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt
-```
-
-默认会输出：
-
-```bash
-logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000_armdims.pt
-```
-
-然后用迁移后的 checkpoint 接着训练，并显式跳过旧 optimizer 状态：
+DogOnly rough curriculum continuation from a flat DogOnly checkpoint:
 
 ```bash
 python scripts/reinforcement_learning/rsl_rl/train.py \
-  --task=RobotLab-Isaac-Velocity-Rough-Go2-X5-Robust-v0 \
+  --task=RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnly-v0 \
   --headless \
   --resume \
-  --no_load_optimizer \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000_armdims.pt
+  --checkpoint=logs/rsl_rl/go2_x5_dog_only_flat/2026-04-18_18-46-33_dog_only_recover_from15000/model_18250.pt
 ```
 
-### RSL-RL 回放
+Reward and weight records are kept locally under `docs/train`.
 
-通用写法：
-
-```bash
-python scripts/reinforcement_learning/rsl_rl/play.py \
-  --task=<TASK_ID> \
-  --checkpoint=<PATH_TO_MODEL>
-```
-
-示例：
+## Replay
 
 ```bash
 python scripts/reinforcement_learning/rsl_rl/play.py \
   --task=RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0 \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt \
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/<run>/model_<iter>.pt \
   --num_envs=1
 ```
 
-单机器人键盘控制：
+Keyboard-controlled single-robot replay:
 
 ```bash
 python scripts/reinforcement_learning/rsl_rl/play.py \
   --task=RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0 \
-  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/2026-03-12_12-11-27/model_8000.pt \
+  --checkpoint=logs/rsl_rl/go2_x5_foundation_flat/<run>/model_<iter>.pt \
   --num_envs=1 \
   --keyboard
 ```
 
-### 指定地图回放
+More examples are in [docs/user/training_and_replay.md](docs/user/training_and_replay.md).
 
-```bash
-python scripts/reinforcement_learning/rsl_rl/play_cs.py \
-  --task=<TASK_ID> \
-  --checkpoint=<PATH_TO_MODEL> \
-  --map=<PATH_TO_USD_MAP>
-```
+## Documentation Policy
 
-### CusRL
+Root-level documentation is limited to:
 
-```bash
-python scripts/reinforcement_learning/cusrl/train.py \
-  --task=<TASK_ID> \
-  --headless
-```
+- `README.md`: project overview.
+- `requirements.txt`: Python dependency notes.
 
-```bash
-python scripts/reinforcement_learning/cusrl/play.py \
-  --task=<TASK_ID>
-```
+Current pushable project docs live in `docs/user`.
 
-## 机器人资产
-
-仓库内包含以下机器人描述文件：
-
-- Go2
-  - `source/robot_lab/data/Robots/unitree/go2_description/urdf/go2_description.urdf`
-- Go2-X5
-  - `source/robot_lab/data/Robots/go2_x5/go2_x5.urdf`
-  - `source/robot_lab/data/Robots/go2_x5/go2_x5.mujoco.urdf`
-
-如果需要将描述文件转换为 USD，可使用：
-
-```bash
-python scripts/tools/convert_urdf.py <INPUT_URDF> <OUTPUT_USD> --headless
-```
-
-```bash
-python scripts/tools/convert_mjcf.py <INPUT_MJCF> <OUTPUT_USD> --headless
-```
-
-## Sim2sim
-
-这里所说的 `sim2sim`，指的是一组面向迁移鲁棒性的扰动建模与资产准备能力，主要包括：
-
-- 动作延迟
-- 动作保持概率
-- 动作噪声
-- 观测延迟
-- 摩擦扰动
-- 外力 / 推扰动
-- actuator gain drift
-
-相关配置与运行逻辑主要位于：
-
-- `scripts/reinforcement_learning/rsl_rl/train.py`
-- `scripts/reinforcement_learning/rsl_rl/play.py`
-- `source/robot_lab/robot_lab/tasks/manager_based/locomotion/velocity/config/quadruped/go2_x5/flat_env_cfg.py`
-- `source/robot_lab/robot_lab/tasks/manager_based/locomotion/velocity/config/quadruped/go2_x5/train_route_env_cfg.py`
-
-当前这部分工作的重点是：
-
-1. 在 Isaac Lab 训练与回放中显式建模时序延迟、噪声与动力学扰动。
-2. 使用 Go2-X5 的 MuJoCo 形式资产支持跨仿真器对齐与导出。
-
-## 输出目录
-
-训练与运行结果主要写入以下目录：
-
-- `logs/`
-  - checkpoint、导出模型、视频等训练产物
-- `outputs/`
-  - Hydra / Isaac Lab 运行输出
-
-测试已有模型时，通常从 `logs/` 中选择 checkpoint，并传给 `play.py` 的 `--checkpoint`。
+Training records and expired local notes live in ignored documentation stores.

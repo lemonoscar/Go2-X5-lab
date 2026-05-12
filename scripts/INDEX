@@ -1,0 +1,13 @@
+Go2-X5-lab Script Layout
+========================
+
+Use this directory as a task-oriented command index.
+
+- control/: manual Go2-X5 keyboard control entrypoints.
+- visualization/: camera, ground-pick, and VLA-SFT scene preview utilities.
+- reinforcement_learning/: RSL-RL and CusRL training/play entrypoints.
+- assets/: URDF/MJCF conversion and local VLA render asset download utilities.
+- checkpoints/: checkpoint migration and model-shape adjustment helpers.
+- maintenance/: cleanup and environment listing utilities.
+
+Test-only programs live under ../test.

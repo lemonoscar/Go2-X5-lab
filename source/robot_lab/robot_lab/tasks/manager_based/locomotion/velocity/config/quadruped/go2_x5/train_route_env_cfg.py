@@ -1164,6 +1164,385 @@ class Go2X5DogOnlyRecoverFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
 
 
 @configclass
+class Go2X5DogOnlyCrawlFlatEnvCfg(Go2X5DogOnlyRecoverFlatEnvCfg):
+    """Dog-only flat crawl task with low body height and large swing-foot clearance."""
+
+    base_height_curriculum_iterations: int = 800
+    command_curriculum_iterations: int = 6800
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        from isaaclab.managers import CurriculumTermCfg as CurrTerm
+
+        crawl_foot_names = ["RL_foot", "FL_foot", "RR_foot", "FR_foot"]
+        crawl_common_params = {
+            "command_name": "base_velocity",
+            "foot_names": crawl_foot_names,
+            "cycle_time": 1.20,
+            "swing_start_fraction": 0.12,
+            "swing_end_fraction": 0.82,
+            "command_threshold": 0.08,
+            "velocity_threshold": 0.12,
+            "contact_force_threshold": 1.0,
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+        }
+
+        self.scene.num_envs = 2048
+        self.scene.terrain.terrain_type = "plane"
+        self.scene.terrain.terrain_generator = None
+        self.curriculum.terrain_levels = None
+
+        self.commands.base_velocity.rel_standing_envs = 0.08
+        self.commands.base_velocity.resampling_time_range = (6.0, 6.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.15, 0.45)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (8.0, 10.0)
+
+        self.actions.joint_pos.scale = {
+            ".*_hip_joint": 0.18,
+            ".*_thigh_joint": 0.32,
+            ".*_calf_joint": 0.32,
+        }
+
+        if self.rewards.feet_gait is not None:
+            self.rewards.feet_gait.weight = 0.0
+
+        self.rewards.crawl_gait = RewTerm(
+            func=mdp.CrawlGaitReward,
+            weight=1.25,
+            params=dict(crawl_common_params),
+        )
+        self.rewards.crawl_support_polygon = RewTerm(
+            func=mdp.CrawlSupportPolygonReward,
+            weight=0.85,
+            params={
+                **crawl_common_params,
+                "margin_scale": 0.08,
+                "outside_penalty_scale": 0.6,
+            },
+        )
+        self.rewards.crawl_swing_clearance = RewTerm(
+            func=mdp.CrawlSwingClearanceReward,
+            weight=0.85,
+            params={
+                **crawl_common_params,
+                "target_clearance": 0.12,
+                "clearance_std": 0.035,
+            },
+        )
+        self.rewards.crawl_stride_length = RewTerm(
+            func=mdp.CrawlStrideLengthReward,
+            weight=0.90,
+            params={
+                **crawl_common_params,
+                "target_stride": 0.22,
+                "stride_std": 0.08,
+                "short_stride_penalty_scale": 0.35,
+            },
+        )
+
+        crawl_weights = {
+            "lin_vel_z_l2": -1.6,
+            "ang_vel_xy_l2": -0.10,
+            "flat_orientation_l2": -0.55,
+            "base_height_l2": -0.35,
+            "body_lin_acc_l2": -0.018,
+            "joint_torques_l2": -1.6e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -1.8,
+            "joint_power": -1.0e-5,
+            "stand_still": -2.0,
+            "joint_pos_penalty": -0.24,
+            "action_rate_l2": -0.014,
+            "undesired_contacts": -1.35,
+            "contact_forces": -1.0e-4,
+            "track_lin_vel_xy_exp": 4.8,
+            "track_ang_vel_z_exp": 0.8,
+            "feet_air_time": 0.25,
+            "feet_air_time_variance": 0.0,
+            "feet_contact_without_cmd": 0.35,
+            "feet_slide": -0.10,
+            "feet_drag": -0.045,
+            "feet_height_body": 0.0,
+            "feet_gait": 0.0,
+            "arm_joint_pos_tracking_l2": 0.0,
+            "arm_joint_vel_l2": 0.0,
+            "arm_joint_acc_l2": 0.0,
+            "arm_joint_torques_l2": 0.0,
+            "arm_action_rate_l2": 0.0,
+            "arm_joint_pos_limits": 0.0,
+            "arm_joint_deviation_l2": 0.0,
+            "arm_motion_tilt_penalty": 0.0,
+            "arm_pose_conditioned_base_stability": 0.0,
+            "zero_cmd_drift_under_arm_motion": 0.0,
+            "zero_cmd_xy_position_drift_under_arm_motion": 0.0,
+            "zero_cmd_yaw_drift_under_arm_motion": 0.0,
+            "arm_action_in_unstable_base": 0.0,
+            "arm_stable_track_bonus": 0.0,
+        }
+
+        for attr_name, weight in crawl_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.feet_air_time.params["threshold"] = 0.20
+        self.rewards.feet_drag.params["penalty_feet_drag_height"] = 0.12
+        self.rewards.feet_drag.params["feet_drag_sigma"] = 0.035
+        self.rewards.joint_pos_penalty.params["stand_still_scale"] = 2.0
+        self.rewards.joint_pos_penalty.params["velocity_threshold"] = 0.20
+        self.rewards.joint_pos_penalty.params["command_threshold"] = 0.05
+        self.rewards.upward.weight = 1.0
+
+        self.curriculum.command_levels_lin_vel = None
+        self.curriculum.command_levels_ang_vel = None
+        self.curriculum.command_range = CurrTerm(
+            func=mdp.base_velocity_range_curriculum,
+            params={
+                "initial_lin_vel_x": (0.15, 0.45),
+                "final_lin_vel_x": (0.20, 0.75),
+                "initial_lin_vel_y": (0.0, 0.0),
+                "final_lin_vel_y": (-0.10, 0.10),
+                "initial_ang_vel_z": (0.0, 0.0),
+                "final_ang_vel_z": (-0.20, 0.20),
+                "curriculum_iterations": self.command_curriculum_iterations,
+            },
+        )
+        self.curriculum.base_height_target = CurrTerm(
+            func=mdp.reward_parameter_curriculum,
+            params={
+                "reward_term_name": "base_height_l2",
+                "param_name": "target_height",
+                "initial_value": 0.30,
+                "final_value": 0.27,
+                "curriculum_iterations": self.base_height_curriculum_iterations,
+            },
+        )
+
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.65, 1.05)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.55, 0.95)
+        self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.10)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.96, 1.04)
+        self.events.randomize_rigid_body_mass_base.params["operation"] = "scale"
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.98, 1.03)
+        self.events.randomize_com_positions.params["com_range"] = {
+            "x": (-0.01, 0.01),
+            "y": (-0.01, 0.01),
+            "z": (-0.01, 0.01),
+        }
+        self.events.randomize_actuator_gains.mode = "reset"
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.75, 1.25)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.75, 1.25)
+        self.events.randomize_actuator_gains.params["distribution"] = "uniform"
+        self.events.randomize_apply_external_force_torque = None
+        self.events.randomize_push_robot = None
+
+        if self.terminations.root_height_below_minimum is not None:
+            self.terminations.root_height_below_minimum.params["minimum_height"] = 0.16
+        if self.terminations.root_height_above_maximum is not None:
+            self.terminations.root_height_above_maximum.params["maximum_height"] = 0.55
+
+        self.sim2sim_action_delay_range = (1, 1)
+        self.sim2sim_action_hold_prob = 0.04
+        self.sim2sim_action_noise_std = 0.001
+        self.sim2sim_obs_delay_steps = 0
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5DogOnlyRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
+    """Dog-only rough-terrain continuation task with fixed arm pose.
+
+    This task keeps the current DogOnly policy contract: 260-D observation,
+    12-D leg action output, and command-driven zero-dim arm action.
+    """
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.scene.num_envs = 2048
+        self.scene.terrain.max_init_terrain_level = 0
+        if self.scene.terrain.terrain_generator is not None:
+            self.scene.terrain.terrain_generator.curriculum = True
+
+        self.actions.joint_pos.scale = {
+            ".*_hip_joint": 0.25,
+            ".*_thigh_joint": 0.25,
+            ".*_calf_joint": 0.25,
+        }
+        self.actions.joint_pos.clip = {".*": (-100.0, 100.0)}
+        self.actions.joint_pos.joint_names = self.dog_joint_names
+        self.actions.arm_joint_pos = mdp.ArmCommandPositionActionCfg(
+            asset_name="robot",
+            joint_names=self.arm_joint_names,
+            command_name="arm_joint_pos",
+            preserve_order=True,
+        )
+
+        self.commands.base_velocity.rel_standing_envs = 0.12
+        self.commands.base_velocity.resampling_time_range = (4.0, 6.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.55, 0.55)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.25, 0.25)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.60, 0.60)
+        self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE
+        self.commands.arm_joint_pos.resampling_time_range = (8.0, 10.0)
+
+        self.observations.policy.actions = ObsTerm(
+            func=mdp.last_action_with_padding,
+            params={"total_action_dim": len(self.joint_names), "pad_value": 0.0},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        self.observations.critic.actions = ObsTerm(
+            func=mdp.last_action_with_padding,
+            params={"total_action_dim": len(self.joint_names), "pad_value": 0.0},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        self.observations.policy.gripper_command = ObsTerm(
+            func=mdp.constant_observation,
+            params={"dim": 1, "value": 0.0},
+            clip=(-1.0, 1.0),
+            scale=1.0,
+        )
+        self.observations.critic.gripper_command = ObsTerm(
+            func=mdp.constant_observation,
+            params={"dim": 1, "value": 0.0},
+            clip=(-1.0, 1.0),
+            scale=1.0,
+        )
+
+        if self.rewards.feet_drag is None:
+            self.rewards.feet_drag = RewTerm(
+                func=mdp.feet_drag_penalty,
+                weight=0.0,
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=[self.foot_link_name]),
+                    "penalty_feet_drag_height": 0.10,
+                    "feet_drag_sigma": 0.05,
+                },
+            )
+
+        dog_only_rough_weights = {
+            "lin_vel_z_l2": -1.8,
+            "ang_vel_xy_l2": -0.12,
+            "flat_orientation_l2": -0.60,
+            "base_height_l2": -0.26,
+            "body_lin_acc_l2": -0.020,
+            "joint_torques_l2": -1.6e-5,
+            "joint_acc_l2": -1.1e-7,
+            "joint_pos_limits": -2.0,
+            "joint_power": -1.1e-5,
+            "stand_still": -2.4,
+            "joint_pos_penalty": -0.55,
+            "action_rate_l2": -0.018,
+            "undesired_contacts": -1.1,
+            "contact_forces": -1.2e-4,
+            "track_lin_vel_xy_exp": 4.6,
+            "track_ang_vel_z_exp": 2.0,
+            "feet_air_time": 0.50,
+            "feet_air_time_variance": -0.20,
+            "feet_contact_without_cmd": 0.25,
+            "feet_slide": -0.12,
+            "feet_drag": -0.035,
+            "feet_height_body": -0.45,
+            "feet_gait": 0.25,
+            "arm_joint_pos_tracking_l2": 0.0,
+            "arm_joint_vel_l2": 0.0,
+            "arm_joint_acc_l2": 0.0,
+            "arm_joint_torques_l2": 0.0,
+            "arm_action_rate_l2": 0.0,
+            "arm_joint_pos_limits": 0.0,
+            "arm_joint_deviation_l2": 0.0,
+            "arm_motion_tilt_penalty": 0.0,
+            "arm_pose_conditioned_base_stability": 0.0,
+            "zero_cmd_drift_under_arm_motion": 0.0,
+            "zero_cmd_xy_position_drift_under_arm_motion": 0.0,
+            "zero_cmd_yaw_drift_under_arm_motion": 0.0,
+            "arm_action_in_unstable_base": 0.0,
+            "arm_stable_track_bonus": 0.0,
+        }
+
+        for attr_name, weight in dog_only_rough_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.feet_air_time.params["threshold"] = 0.50
+        self.rewards.feet_height_body.params["target_height"] = -0.16
+        self.rewards.feet_height_body.params["tanh_mult"] = 1.5
+        self.rewards.feet_drag.params["penalty_feet_drag_height"] = 0.14
+        self.rewards.feet_drag.params["feet_drag_sigma"] = 0.04
+        self.rewards.feet_gait.params["command_threshold"] = 0.08
+        self.rewards.feet_gait.params["velocity_threshold"] = 0.20
+        self.rewards.feet_gait.params["max_err"] = 0.18
+        self.rewards.joint_pos_penalty.params["stand_still_scale"] = 3.0
+        self.rewards.joint_pos_penalty.params["velocity_threshold"] = 0.25
+        self.rewards.joint_pos_penalty.params["command_threshold"] = 0.08
+        self.rewards.upward.weight = 1.0
+
+        self.events.randomize_reset_base.params = {
+            "pose_range": {
+                "x": (-0.25, 0.25),
+                "y": (-0.25, 0.25),
+                "z": (0.0, 0.10),
+                "roll": (-0.10, 0.10),
+                "pitch": (-0.10, 0.10),
+                "yaw": (-3.14, 3.14),
+            },
+            "velocity_range": {
+                "x": (-0.20, 0.20),
+                "y": (-0.20, 0.20),
+                "z": (-0.20, 0.20),
+                "roll": (-0.20, 0.20),
+                "pitch": (-0.20, 0.20),
+                "yaw": (-0.20, 0.20),
+            },
+        }
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.60, 1.20)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.50, 1.05)
+        self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.15)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.95, 1.05)
+        self.events.randomize_rigid_body_mass_base.params["operation"] = "scale"
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.97, 1.04)
+        self.events.randomize_com_positions.params["com_range"] = {
+            "x": (-0.015, 0.015),
+            "y": (-0.015, 0.015),
+            "z": (-0.015, 0.015),
+        }
+        self.events.randomize_actuator_gains.mode = "reset"
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.85, 1.15)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.85, 1.15)
+        self.events.randomize_actuator_gains.params["distribution"] = "uniform"
+        self.events.randomize_apply_external_force_torque = None
+        self.events.randomize_push_robot = None
+
+        self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.02, n_max=0.02)
+        self.observations.policy.projected_gravity.noise = Unoise(n_min=-0.02, n_max=0.02)
+        self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.25, 1.0)
+        self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.25, 1.0)
+
+        self.sim2sim_action_delay_range = (1, 1)
+        self.sim2sim_action_hold_prob = 0.03
+        self.sim2sim_action_noise_std = 0.002
+        self.sim2sim_obs_delay_steps = 0
+
+        # Terrain-relative base-height reward is enough on generated terrain.
+        self.terminations.root_height_below_minimum = None
+        self.terminations.root_height_above_maximum = None
+        self.terminations.illegal_contact = None
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
 class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
     # Reward weight curriculum settings
     reward_curriculum_iterations: int = 64  # Roughly ~2k PPO updates with the current env-step based schedule

@@ -31,6 +31,32 @@ gym.register(
     },
 )
 
+# UMI phase-1 skeleton tasks. The RSL-RL entry points intentionally target the future
+# UMI runner module so later agents can land PPO without renaming the task ids.
+gym.register(
+    id="RobotLab-Isaac-Velocity-Flat-Go2-X5-UMI-Locomotion6D-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.umi_locomotion6d_env_cfg:UmiGo2X5Locomotion6dEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.umi_rsl_rl_ppo_cfg:Go2X5UmiLocomotion6dPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="RobotLab-Isaac-Velocity-Rough-Go2-X5-UMI-Extreme-Locomotion6D-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.umi_extreme_locomotion6d_env_cfg:UmiGo2X5ExtremeLocomotion6dEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.umi_rsl_rl_ppo_cfg:Go2X5UmiExtremeLocomotion6dPPORunnerCfg"
+        ),
+    },
+)
+
 gym.register(
     id="RobotLab-Isaac-Velocity-Flat-Go2-X5-Foundation-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
@@ -94,6 +120,28 @@ gym.register(
         "env_cfg_entry_point": f"{__name__}.train_route_env_cfg:Go2X5DogOnlyRecoverFlatEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyRecoverFlatPPORunnerCfg",
         "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:Go2X5DogOnlyRecoverFlatTrainerCfg",
+    },
+)
+
+gym.register(
+    id="RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyCrawl-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.train_route_env_cfg:Go2X5DogOnlyCrawlFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyCrawlFlatPPORunnerCfg",
+        "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:Go2X5DogOnlyCrawlFlatTrainerCfg",
+    },
+)
+
+gym.register(
+    id="RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnly-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.train_route_env_cfg:Go2X5DogOnlyRoughEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyRoughPPORunnerCfg",
+        "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:Go2X5DogOnlyRoughTrainerCfg",
     },
 )
 
