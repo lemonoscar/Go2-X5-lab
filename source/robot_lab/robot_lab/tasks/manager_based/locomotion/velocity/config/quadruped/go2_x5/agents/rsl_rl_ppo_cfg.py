@@ -149,6 +149,19 @@ class Go2X5DogOnlyRoughPPORunnerCfg(Go2X5DogOnlyFlatPPORunnerCfg):
 
 
 @configclass
+class Go2X5DogOnlyHardRoughPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 18000
+        self.save_interval = 250
+        self.experiment_name = "go2_x5_dog_only_hard_rough"
+        self.algorithm.entropy_coef = 0.0025
+        self.algorithm.learning_rate = 7.5e-5
+
+
+@configclass
 class Go2X5RobustRoughPPORunnerCfg(Go2X5RoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()

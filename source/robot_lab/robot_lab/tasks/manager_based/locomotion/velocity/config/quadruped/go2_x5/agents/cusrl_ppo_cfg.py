@@ -221,6 +221,13 @@ class Go2X5DogOnlyRoughTrainerCfg(Go2X5DogOnlyFlatTrainerCfg):
 
 
 @dataclass
+class Go2X5DogOnlyHardRoughTrainerCfg(Go2X5DogOnlyRoughTrainerCfg):
+    max_iterations = 18000
+    save_interval = 100
+    experiment_name = "go2_x5_dog_only_hard_rough"
+
+
+@dataclass
 class Go2X5RobustRoughTrainerCfg(Go2X5RoughTrainerCfg):
     max_iterations = 12000
     save_interval = 100

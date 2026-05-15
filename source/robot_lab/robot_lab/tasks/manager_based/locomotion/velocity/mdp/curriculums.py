@@ -13,6 +13,8 @@ import torch
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+from isaaclab.managers import SceneEntityCfg
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -94,6 +96,44 @@ def command_levels_ang_vel(
             base_velocity_ranges.ang_vel_z = new_ang_vel_z.tolist()
 
     return torch.tensor(base_velocity_ranges.ang_vel_z[1], device=env.device)
+
+
+def terrain_levels_vel_hard(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    move_up_distance_ratio: float = 0.35,
+    move_down_command_ratio: float = 0.25,
+    move_down_min_distance: float = 0.8,
+) -> torch.Tensor:
+    """Terrain curriculum biased toward harder rows for high-difficulty rough training.
+
+    The stock velocity curriculum requires roughly half a terrain tile of progress before
+    moving up. This variant promotes earlier on obstacle-heavy tiles and only demotes an
+    environment when it barely leaves its origin relative to the commanded distance.
+    """
+
+    asset = env.scene[asset_cfg.name]
+    terrain = env.scene.terrain
+    command = env.command_manager.get_command("base_velocity")
+
+    if terrain.terrain_origins is None:
+        return torch.tensor(0.0, device=env.device)
+
+    distance = torch.norm(asset.data.root_pos_w[env_ids, :2] - env.scene.env_origins[env_ids, :2], dim=1)
+    tile_length = terrain.cfg.terrain_generator.size[0]
+    commanded_distance = torch.norm(command[env_ids, :2], dim=1) * env.max_episode_length_s
+    move_down_distance = torch.maximum(
+        commanded_distance * move_down_command_ratio,
+        torch.full_like(commanded_distance, move_down_min_distance),
+    )
+
+    move_up = distance > tile_length * move_up_distance_ratio
+    move_down = distance < move_down_distance
+    move_down *= ~move_up
+
+    terrain.update_env_origins(env_ids, move_up, move_down)
+    return torch.mean(terrain.terrain_levels.float())
 
 
 def arm_joint_position_range_curriculum(

@@ -1543,6 +1543,120 @@ class Go2X5DogOnlyRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
 
 
 @configclass
+class Go2X5DogOnlyHardRoughEnvCfg(Go2X5DogOnlyRoughEnvCfg):
+    """Harder rough-terrain continuation for the fixed-arm DogOnly policy."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.scene.num_envs = 2048
+        self.scene.terrain.max_init_terrain_level = 3
+
+        terrain_cfg = self.scene.terrain.terrain_generator
+        if terrain_cfg is not None:
+            terrain_cfg.curriculum = True
+            terrain_cfg.num_rows = 10
+            terrain_cfg.num_cols = 20
+            terrain_cfg.difficulty_range = (0.0, 1.0)
+            terrain_cfg.slope_threshold = 0.80
+
+            sub_terrains = terrain_cfg.sub_terrains
+            if "pyramid_stairs" in sub_terrains:
+                sub_terrains["pyramid_stairs"].proportion = 0.24
+                sub_terrains["pyramid_stairs"].step_height_range = (0.06, 0.25)
+            if "pyramid_stairs_inv" in sub_terrains:
+                sub_terrains["pyramid_stairs_inv"].proportion = 0.18
+                sub_terrains["pyramid_stairs_inv"].step_height_range = (0.06, 0.25)
+            if "boxes" in sub_terrains:
+                sub_terrains["boxes"].proportion = 0.22
+                sub_terrains["boxes"].grid_height_range = (0.06, 0.22)
+            if "random_rough" in sub_terrains:
+                sub_terrains["random_rough"].proportion = 0.22
+                sub_terrains["random_rough"].noise_range = (0.025, 0.13)
+                sub_terrains["random_rough"].noise_step = 0.02
+            if "hf_pyramid_slope" in sub_terrains:
+                sub_terrains["hf_pyramid_slope"].proportion = 0.07
+                sub_terrains["hf_pyramid_slope"].slope_range = (0.0, 0.45)
+            if "hf_pyramid_slope_inv" in sub_terrains:
+                sub_terrains["hf_pyramid_slope_inv"].proportion = 0.07
+                sub_terrains["hf_pyramid_slope_inv"].slope_range = (0.0, 0.45)
+
+        if self.curriculum.terrain_levels is not None:
+            self.curriculum.terrain_levels.func = mdp.terrain_levels_vel_hard
+            self.curriculum.terrain_levels.params = {
+                "asset_cfg": SceneEntityCfg("robot"),
+                "move_up_distance_ratio": 0.35,
+                "move_down_command_ratio": 0.25,
+                "move_down_min_distance": 0.8,
+            }
+
+        self.commands.base_velocity.rel_standing_envs = 0.08
+        self.commands.base_velocity.resampling_time_range = (4.0, 6.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (-0.45, 0.55)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.20, 0.20)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.50, 0.50)
+        self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.35, 1.0)
+        self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.35, 1.0)
+
+        hard_rough_weights = {
+            "lin_vel_z_l2": -1.6,
+            "ang_vel_xy_l2": -0.10,
+            "flat_orientation_l2": -0.45,
+            "base_height_l2": -0.22,
+            "body_lin_acc_l2": -0.018,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -2.2,
+            "joint_power": -1.1e-5,
+            "stand_still": -2.0,
+            "joint_pos_penalty": -0.48,
+            "action_rate_l2": -0.015,
+            "undesired_contacts": -1.3,
+            "contact_forces": -1.4e-4,
+            "track_lin_vel_xy_exp": 4.2,
+            "track_ang_vel_z_exp": 1.8,
+            "feet_air_time": 0.65,
+            "feet_air_time_variance": -0.16,
+            "feet_contact_without_cmd": 0.20,
+            "feet_slide": -0.14,
+            "feet_drag": -0.06,
+            "feet_height_body": -0.38,
+            "feet_gait": 0.18,
+        }
+
+        for attr_name, weight in hard_rough_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.rewards.base_height_l2.params["target_height"] = 0.31
+        self.rewards.feet_air_time.params["threshold"] = 0.54
+        self.rewards.feet_height_body.params["target_height"] = -0.15
+        self.rewards.feet_height_body.params["tanh_mult"] = 1.3
+        self.rewards.feet_drag.params["penalty_feet_drag_height"] = 0.16
+        self.rewards.feet_drag.params["feet_drag_sigma"] = 0.035
+        self.rewards.feet_gait.params["max_err"] = 0.24
+
+        self.events.randomize_reset_base.params["pose_range"]["z"] = (0.02, 0.12)
+        self.events.randomize_reset_base.params["pose_range"]["roll"] = (-0.12, 0.12)
+        self.events.randomize_reset_base.params["pose_range"]["pitch"] = (-0.12, 0.12)
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.55, 1.25)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.45, 1.10)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.93, 1.07)
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.96, 1.05)
+        self.events.randomize_com_positions.params["com_range"] = {
+            "x": (-0.018, 0.018),
+            "y": (-0.018, 0.018),
+            "z": (-0.018, 0.018),
+        }
+
+        self.sim2sim_action_hold_prob = 0.035
+        self.sim2sim_action_noise_std = 0.0025
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
 class Go2X5RobustRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
     # Reward weight curriculum settings
     reward_curriculum_iterations: int = 64  # Roughly ~2k PPO updates with the current env-step based schedule
