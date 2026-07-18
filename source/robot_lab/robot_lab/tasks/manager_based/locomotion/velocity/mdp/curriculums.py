@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 
 from isaaclab.managers import SceneEntityCfg
 
+from .utils import is_env_assigned_to_terrain
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -98,6 +100,90 @@ def command_levels_ang_vel(
     return torch.tensor(base_velocity_ranges.ang_vel_z[1], device=env.device)
 
 
+def stratified_vx_command_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    command_name: str,
+    reward_term_name: str,
+    steps_per_iteration: int = 32,
+    full_range_iteration: int = 2000,
+    performance_threshold: float = 0.75,
+) -> dict[str, torch.Tensor]:
+    """Unlock vx bins on good tracking and guarantee the full range by phase C2."""
+    command_term = env.command_manager.get_term(command_name)
+    iteration = int(env.common_step_counter // max(steps_per_iteration, 1))
+    total_speed_count = len(command_term.speed_values)
+
+    if iteration >= full_range_iteration:
+        command_term.set_active_speed_count(total_speed_count)
+    elif (
+        command_term.active_speed_count < total_speed_count
+        and iteration - command_term.last_speed_promotion_iteration
+        >= command_term.cfg.promotion_interval_iterations
+    ):
+        episode_sums = env.reward_manager._episode_sums[reward_term_name]
+        reward_cfg = env.reward_manager.get_term_cfg(reward_term_name)
+        ids = torch.as_tensor(env_ids, dtype=torch.long, device=env.device)
+        normalized_reward = torch.mean(episode_sums[ids]) / max(env.max_episode_length_s, 1.0e-6)
+        target_reward = performance_threshold * max(float(reward_cfg.weight), 1.0e-6)
+        if normalized_reward >= target_reward:
+            command_term.set_active_speed_count(command_term.active_speed_count + 1)
+            command_term.last_speed_promotion_iteration = iteration
+
+    return {
+        "active_speed_bins": torch.tensor(command_term.active_speed_count, device=env.device),
+        "active_max_vx": torch.tensor(command_term.active_max_speed, device=env.device),
+        "full_range_rehearsal_probability": torch.tensor(
+            command_term.cfg.full_range_rehearsal_probability, device=env.device
+        ),
+        "training_iteration": torch.tensor(iteration, device=env.device),
+    }
+
+
+def rough_stairs_vx_terrain_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    steps_per_iteration: int = 32,
+    full_difficulty_iteration: int = 2000,
+    move_up_distance_ratio: float = 0.25,
+    move_down_command_ratio: float = 0.25,
+    move_down_min_distance: float = 0.7,
+) -> dict[str, torch.Tensor]:
+    """Terrain curriculum with a low-rise warm-up during the first 2000 updates."""
+    asset = env.scene[asset_cfg.name]
+    terrain = env.scene.terrain
+    if terrain.terrain_origins is None:
+        zero = torch.tensor(0.0, device=env.device)
+        return {"terrain_level": zero, "terrain_level_cap": zero}
+
+    ids = torch.as_tensor(env_ids, dtype=torch.long, device=env.device)
+    iteration = int(env.common_step_counter // max(steps_per_iteration, 1))
+    maximum_level = terrain.cfg.terrain_generator.num_rows - 1
+    warmup_ratio = min(iteration / max(full_difficulty_iteration, 1), 1.0)
+    level_cap = max(1, round(warmup_ratio * maximum_level))
+
+    distance = torch.linalg.norm(
+        asset.data.root_pos_w[ids, :2] - env.scene.env_origins[ids, :2], dim=1
+    )
+    command = env.command_manager.get_command("base_velocity")
+    commanded_distance = torch.linalg.norm(command[ids, :2], dim=1) * env.max_episode_length_s
+    move_down_distance = torch.maximum(
+        commanded_distance * move_down_command_ratio,
+        torch.full_like(commanded_distance, move_down_min_distance),
+    )
+    move_up = distance > terrain.cfg.terrain_generator.size[0] * move_up_distance_ratio
+    move_up &= terrain.terrain_levels[ids] < level_cap
+    move_down = (distance < move_down_distance) & ~move_up
+    terrain.update_env_origins(ids, move_up, move_down)
+
+    return {
+        "terrain_level": torch.mean(terrain.terrain_levels.float()),
+        "terrain_level_cap": torch.tensor(level_cap, device=env.device),
+        "training_iteration": torch.tensor(iteration, device=env.device),
+    }
+
+
 def terrain_levels_vel_hard(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
@@ -134,6 +220,106 @@ def terrain_levels_vel_hard(
 
     terrain.update_env_origins(env_ids, move_up, move_down)
     return torch.mean(terrain.terrain_levels.float())
+
+
+def pct_stair_completion_levels(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    command_name: str,
+    contact_force_threshold: float,
+    base_head_arm_sensor_cfg: SceneEntityCfg,
+    hip_sensor_cfg: SceneEntityCfg,
+    thigh_sensor_cfg: SceneEntityCfg,
+    required_consecutive_successes: int = 1,
+    move_down_progress_ratio: float = 0.55,
+    minimum_upright_projection: float = 0.94,
+) -> dict[str, torch.Tensor]:
+    """Advance PCT terrain only after a stable, contact-free path completion."""
+    if required_consecutive_successes < 1:
+        raise ValueError("required_consecutive_successes must be at least one.")
+
+    terrain = env.scene.terrain
+    if terrain.terrain_origins is None:
+        zero = torch.tensor(0.0, device=env.device)
+        return {
+            "terrain_level": zero,
+            "completion_rate": zero,
+            "path_progress_ratio": zero,
+            "height_ratio": zero,
+            "scan_completion_rate": zero,
+            "scan_path_progress_ratio": zero,
+            "scan_height_ratio": zero,
+            "procedural_completion_rate": zero,
+            "promotion_rate": zero,
+            "success_streak_mean": zero,
+            "base_head_arm_contact_rate": zero,
+            "hip_contact_rate": zero,
+            "thigh_contact_rate": zero,
+        }
+
+    command_term = env.command_manager.get_term(command_name)
+    progress_ratio = command_term.path_progress_ratio[env_ids]
+    target_height = torch.clamp(command_term.target_height_gain_m[env_ids], min=1.0e-6)
+    height_ratio = command_term.height_gain_m[env_ids] / target_height
+    upright = -env.scene["robot"].data.projected_gravity_b[env_ids, 2] >= minimum_upright_projection
+
+    reset_time_outs = getattr(env, "reset_time_outs", torch.zeros(env.num_envs, device=env.device, dtype=torch.bool))
+    reset_terminated = getattr(
+        env, "reset_terminated", torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
+    )
+    successful_completion = command_term.path_completed[env_ids].clone()
+    successful_completion &= reset_time_outs[env_ids]
+    successful_completion &= ~reset_terminated[env_ids]
+    successful_completion &= upright
+
+    success_streak = getattr(env, "_pct_stair_success_streak", None)
+    if success_streak is None:
+        success_streak = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
+        env._pct_stair_success_streak = success_streak
+    updated_streak = torch.where(
+        successful_completion,
+        success_streak[env_ids] + 1,
+        torch.zeros_like(success_streak[env_ids]),
+    )
+    move_up = successful_completion & (updated_streak >= required_consecutive_successes)
+    success_streak[env_ids] = torch.where(move_up, torch.zeros_like(updated_streak), updated_streak)
+
+    move_down = ~successful_completion
+    move_down &= torch.logical_or(
+        progress_ratio < move_down_progress_ratio,
+        reset_terminated[env_ids],
+    )
+    terrain.update_env_origins(env_ids, move_up, move_down)
+
+    scan_mask = is_env_assigned_to_terrain(env, "pct_scanned_first_flight")[env_ids]
+    procedural_mask = ~scan_mask
+
+    def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        weights = mask.to(values.dtype)
+        return torch.sum(values * weights) / torch.clamp(torch.sum(weights), min=1.0)
+
+    contact_sensor = env.scene.sensors[base_head_arm_sensor_cfg.name]
+
+    def _contact_rate(sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+        forces = contact_sensor.data.net_forces_w_history[env_ids][:, :, sensor_cfg.body_ids, :]
+        maximum_force = torch.linalg.norm(forces, dim=-1).amax(dim=(1, 2))
+        return torch.mean((maximum_force > contact_force_threshold).to(torch.float32))
+
+    return {
+        "terrain_level": torch.mean(terrain.terrain_levels.float()),
+        "completion_rate": torch.mean(successful_completion.to(torch.float32)),
+        "path_progress_ratio": torch.mean(progress_ratio),
+        "height_ratio": torch.mean(height_ratio),
+        "scan_completion_rate": _masked_mean(successful_completion.float(), scan_mask),
+        "scan_path_progress_ratio": _masked_mean(progress_ratio, scan_mask),
+        "scan_height_ratio": _masked_mean(height_ratio, scan_mask),
+        "procedural_completion_rate": _masked_mean(successful_completion.float(), procedural_mask),
+        "promotion_rate": torch.mean(move_up.to(torch.float32)),
+        "success_streak_mean": torch.mean(success_streak[env_ids].to(torch.float32)),
+        "base_head_arm_contact_rate": _contact_rate(base_head_arm_sensor_cfg),
+        "hip_contact_rate": _contact_rate(hip_sensor_cfg),
+        "thigh_contact_rate": _contact_rate(thigh_sensor_cfg),
+    }
 
 
 def arm_joint_position_range_curriculum(

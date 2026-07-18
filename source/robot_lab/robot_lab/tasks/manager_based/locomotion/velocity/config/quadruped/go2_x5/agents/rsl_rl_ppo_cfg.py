@@ -162,6 +162,295 @@ class Go2X5DogOnlyHardRoughPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
 
 
 @configclass
+class Go2X5DogOnlyStairsPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 6000
+        self.save_interval = 250
+        self.experiment_name = "go2_x5_dog_only_stairs"
+        self.algorithm.entropy_coef = 0.002
+        self.algorithm.learning_rate = 5.0e-5
+
+
+@configclass
+class Go2X5DogOnlyRoughStairsVxPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
+    """Long, low-learning-rate continuation for the unified vx/stairs policy."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 10000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_rough_stairs_vx"
+        self.algorithm.entropy_coef = 0.0015
+        self.algorithm.learning_rate = 1.0e-5
+
+
+@configclass
+class Go2X5DogOnlyPctStairsPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 1000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_pct_stairs"
+        self.algorithm.entropy_coef = 0.0015
+        self.algorithm.learning_rate = 2.5e-5
+
+
+@configclass
+class Go2X5DogOnlyPctStairsHardPPORunnerCfg(Go2X5DogOnlyPctStairsPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 1000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_hard"
+        self.algorithm.learning_rate = 1.0e-5
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFirstStepsPPORunnerCfg(Go2X5DogOnlyPctStairsHardPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 250
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_first_steps"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFirstRisePPORunnerCfg(Go2X5DogOnlyPctStairsFirstStepsPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 100
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_first_rise"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFirstRiseExactPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFirstRisePPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 150
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_first_rise_exact"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFirstRiseExactScan1mPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFirstRiseExactPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_first_rise_exact_scan1m"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFirstRiseExactHighStepPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFirstRiseExactScan1mPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_first_rise_exact_high_step"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFirstStepsExactHighStepPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFirstRiseExactHighStepPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 250
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_first_steps_exact_high_step"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsSecondRiseExactHighStepPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFirstRiseExactHighStepPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 200
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_second_rise_exact_high_step"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsSecondRiseExactSlowPPORunnerCfg(
+    Go2X5DogOnlyPctStairsSecondRiseExactHighStepPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_second_rise_exact_slow"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightExactSlowPPORunnerCfg(
+    Go2X5DogOnlyPctStairsSecondRiseExactSlowPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 48
+        self.max_iterations = 1000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_exact_slow"
+        self.algorithm.entropy_coef = 0.003
+        self.algorithm.learning_rate = 2.5e-5
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledSlowPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightExactSlowPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_slow"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledUprightPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledSlowPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_upright"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledSafeSurvivalPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledUprightPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_safe_survival"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledDeploymentSpeedPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledSafeSurvivalPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_deployment_speed"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledRearSupportPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledDeploymentSpeedPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_rear_support"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledStableCompletionPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledRearSupportPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 500
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_stable_completion"
+        self.algorithm.entropy_coef = 0.001
+        self.algorithm.learning_rate = 1.0e-5
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledTopLandingPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledRearSupportPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 1000
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_top_landing"
+        self.algorithm.entropy_coef = 0.001
+        self.algorithm.learning_rate = 1.0e-5
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledPlatformProgressPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledRearSupportPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 1000
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_platform_progress"
+        self.algorithm.entropy_coef = 0.001
+        self.algorithm.learning_rate = 5.0e-6
+
+
+@configclass
+class Go2X5DogOnlyPctRegularUpDownStairsPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledPlatformProgressPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 1000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_pct_regular_up_down_stairs"
+
+
+@configclass
+class Go2X5DogOnlyPctRegularAscentCurriculumPPORunnerCfg(
+    Go2X5DogOnlyPctRegularUpDownStairsPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_regular_ascent_curriculum"
+
+
+@configclass
+class Go2X5DogOnlyPctRegularDescentStartPPORunnerCfg(
+    Go2X5DogOnlyPctRegularUpDownStairsPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_regular_descent_start"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledPlatformEntryPPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledPlatformProgressPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_platform_entry"
+
+
+@configclass
+class Go2X5DogOnlyPctStairsFullFlightProfiledCoveragePPORunnerCfg(
+    Go2X5DogOnlyPctStairsFullFlightProfiledSafeSurvivalPPORunnerCfg
+):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.experiment_name = "go2_x5_dog_only_pct_stairs_full_flight_profiled_coverage"
+
+
+@configclass
 class Go2X5RobustRoughPPORunnerCfg(Go2X5RoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()

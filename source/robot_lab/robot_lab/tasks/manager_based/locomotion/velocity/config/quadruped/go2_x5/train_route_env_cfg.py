@@ -59,6 +59,42 @@ ARM_DOG_ONLY_ARM_SWING_FINAL_RANGE = [
     (-0.25, 0.25),
     (-0.25, 0.25),
 ]
+DOG_ONLY_CROUCH_BASE_HEIGHT = 0.28
+DOG_ONLY_CROUCH_JOINT_POS = {
+    # Positive hip abduction on the left legs and negative hip abduction on the
+    # right legs bias the DogOnly policy away from the current toe-in gait.
+    "FR_hip_joint": -0.08,
+    "FL_hip_joint": 0.08,
+    "RR_hip_joint": -0.08,
+    "RL_hip_joint": 0.08,
+    "FR_thigh_joint": 0.90,
+    "FL_thigh_joint": 0.90,
+    "RR_thigh_joint": 1.10,
+    "RL_thigh_joint": 1.10,
+    "FR_calf_joint": -1.60,
+    "FL_calf_joint": -1.60,
+    "RR_calf_joint": -1.60,
+    "RL_calf_joint": -1.60,
+}
+
+# Keep the stair-adaptation task aligned with the default pose embedded in the
+# 2026-05-12 DogOnly rough checkpoints. The active rough task intentionally has
+# a separate crouch pose and must not be changed when an old checkpoint is used.
+DOG_ONLY_ROUGH_CHECKPOINT_BASE_HEIGHT = 0.30
+DOG_ONLY_ROUGH_CHECKPOINT_JOINT_POS = {
+    "FR_hip_joint": 0.10,
+    "FL_hip_joint": -0.10,
+    "RR_hip_joint": 0.10,
+    "RL_hip_joint": -0.10,
+    "FR_thigh_joint": 0.80,
+    "FL_thigh_joint": 0.80,
+    "RR_thigh_joint": 1.00,
+    "RL_thigh_joint": 1.00,
+    "FR_calf_joint": -1.50,
+    "FL_calf_joint": -1.50,
+    "RR_calf_joint": -1.50,
+    "RL_calf_joint": -1.50,
+}
 
 FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
     curriculum=False,
@@ -72,6 +108,66 @@ FLAT_FOUNDATION_TERRAIN_CFG = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=1.0),
+    },
+)
+
+DOG_ONLY_STAIRS_TERRAIN_CFG = TerrainGeneratorCfg(
+    curriculum=True,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.05,
+    vertical_scale=0.005,
+    slope_threshold=0.80,
+    use_cache=False,
+    sub_terrains={
+        "stairs_standard_up": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.15,
+            step_height_range=(0.04, 0.14),
+            step_width=0.30,
+            platform_width=2.50,
+            border_width=1.0,
+            holes=False,
+        ),
+        "stairs_standard_down": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.15,
+            step_height_range=(0.04, 0.14),
+            step_width=0.28,
+            platform_width=2.50,
+            border_width=1.0,
+            holes=False,
+        ),
+        "stairs_narrow_up": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.25,
+            step_height_range=(0.04, 0.11),
+            step_width=0.18,
+            platform_width=2.00,
+            border_width=1.0,
+            holes=False,
+        ),
+        "stairs_narrow_down": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.20,
+            step_height_range=(0.04, 0.11),
+            step_width=0.18,
+            platform_width=2.00,
+            border_width=1.0,
+            holes=False,
+        ),
+        "narrow_edge_proxy": terrain_gen.MeshRandomGridTerrainCfg(
+            proportion=0.15,
+            grid_width=0.18,
+            grid_height_range=(0.02, 0.10),
+            platform_width=2.00,
+            holes=False,
+        ),
+        "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+            proportion=0.10,
+            noise_range=(0.01, 0.08),
+            noise_step=0.01,
+            border_width=0.25,
+            downsampled_scale=0.20,
+        ),
     },
 )
 
@@ -916,7 +1012,14 @@ class Go2X5DogOnlyFlatEnvCfg(Go2X5ArmLocomotionFlatEnvCfg):
             if reward_term is not None:
                 reward_term.weight = weight
 
-        self.rewards.base_height_l2.params["target_height"] = 0.30
+        joint_pos = dict(self.scene.robot.init_state.joint_pos)
+        joint_pos.update(DOG_ONLY_CROUCH_JOINT_POS)
+        self.scene.robot.init_state = self.scene.robot.init_state.replace(
+            pos=(0.0, 0.0, DOG_ONLY_CROUCH_BASE_HEIGHT),
+            joint_pos=joint_pos,
+        )
+
+        self.rewards.base_height_l2.params["target_height"] = DOG_ONLY_CROUCH_BASE_HEIGHT
         self.rewards.feet_air_time.params["threshold"] = 0.50
         self.rewards.feet_height_body.params["target_height"] = -0.20
         self.rewards.upward.weight = 1.0
@@ -1027,7 +1130,7 @@ class Go2X5DogOnlyArmFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
             if reward_term is not None:
                 reward_term.weight = weight
 
-        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.base_height_l2.params["target_height"] = DOG_ONLY_CROUCH_BASE_HEIGHT
         self.rewards.feet_air_time.params["threshold"] = 0.45
         self.rewards.upward.weight = 1.0
 
@@ -1146,7 +1249,7 @@ class Go2X5DogOnlyRecoverFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
             if reward_term is not None:
                 reward_term.weight = weight
 
-        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.base_height_l2.params["target_height"] = DOG_ONLY_CROUCH_BASE_HEIGHT
         self.rewards.feet_air_time.params["threshold"] = 0.60
         self.rewards.feet_height_body.params["target_height"] = -0.16
         self.rewards.feet_height_body.params["tanh_mult"] = 1.5
@@ -1290,7 +1393,7 @@ class Go2X5DogOnlyCrawlFlatEnvCfg(Go2X5DogOnlyRecoverFlatEnvCfg):
             if reward_term is not None:
                 reward_term.weight = weight
 
-        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.base_height_l2.params["target_height"] = DOG_ONLY_CROUCH_BASE_HEIGHT
         self.rewards.feet_air_time.params["threshold"] = 0.20
         self.rewards.feet_drag.params["penalty_feet_drag_height"] = 0.12
         self.rewards.feet_drag.params["feet_drag_sigma"] = 0.035
@@ -1318,8 +1421,8 @@ class Go2X5DogOnlyCrawlFlatEnvCfg(Go2X5DogOnlyRecoverFlatEnvCfg):
             params={
                 "reward_term_name": "base_height_l2",
                 "param_name": "target_height",
-                "initial_value": 0.30,
-                "final_value": 0.27,
+                "initial_value": DOG_ONLY_CROUCH_BASE_HEIGHT,
+                "final_value": 0.26,
                 "curriculum_iterations": self.base_height_curriculum_iterations,
             },
         )
@@ -1370,6 +1473,13 @@ class Go2X5DogOnlyRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
         self.scene.terrain.max_init_terrain_level = 0
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.curriculum = True
+
+        joint_pos = dict(self.scene.robot.init_state.joint_pos)
+        joint_pos.update(DOG_ONLY_CROUCH_JOINT_POS)
+        self.scene.robot.init_state = self.scene.robot.init_state.replace(
+            pos=(0.0, 0.0, DOG_ONLY_CROUCH_BASE_HEIGHT),
+            joint_pos=joint_pos,
+        )
 
         self.actions.joint_pos.scale = {
             ".*_hip_joint": 0.25,
@@ -1474,7 +1584,7 @@ class Go2X5DogOnlyRoughEnvCfg(_Go2X5LeggedBaseEnvCfg):
             if reward_term is not None:
                 reward_term.weight = weight
 
-        self.rewards.base_height_l2.params["target_height"] = 0.30
+        self.rewards.base_height_l2.params["target_height"] = DOG_ONLY_CROUCH_BASE_HEIGHT
         self.rewards.feet_air_time.params["threshold"] = 0.50
         self.rewards.feet_height_body.params["target_height"] = -0.16
         self.rewards.feet_height_body.params["tanh_mult"] = 1.5
@@ -1649,6 +1759,121 @@ class Go2X5DogOnlyHardRoughEnvCfg(Go2X5DogOnlyRoughEnvCfg):
             "y": (-0.018, 0.018),
             "z": (-0.018, 0.018),
         }
+
+        self.sim2sim_action_hold_prob = 0.035
+        self.sim2sim_action_noise_std = 0.0025
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5DogOnlyStairsEnvCfg(Go2X5DogOnlyRoughEnvCfg):
+    """PCT-oriented stair continuation for the 2026-05-12 DogOnly rough policy."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.scene.num_envs = 1024
+        self.scene.terrain.terrain_generator = DOG_ONLY_STAIRS_TERRAIN_CFG.copy()
+        self.scene.terrain.max_init_terrain_level = 1
+
+        # model_26000.pt was trained around this exact default pose. Restoring it
+        # here avoids interpreting the current rough-task crouch update as policy
+        # output while keeping that independent user change intact.
+        joint_pos = dict(self.scene.robot.init_state.joint_pos)
+        joint_pos.update(DOG_ONLY_ROUGH_CHECKPOINT_JOINT_POS)
+        self.scene.robot.init_state = self.scene.robot.init_state.replace(
+            pos=(0.0, 0.0, DOG_ONLY_ROUGH_CHECKPOINT_BASE_HEIGHT),
+            joint_pos=joint_pos,
+        )
+
+        self.commands.base_velocity.rel_standing_envs = 0.06
+        self.commands.base_velocity.resampling_time_range = (6.0, 10.0)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.12, 0.32)
+        self.commands.base_velocity.ranges.lin_vel_y = (-0.12, 0.12)
+        self.commands.base_velocity.ranges.ang_vel_z = (-0.50, 0.50)
+        # Keep the forward-speed distribution inside the PCT controller's
+        # deployed range from the first update; difficulty comes from terrain.
+        self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (1.0, 1.0)
+        self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.35, 1.0)
+
+        if self.curriculum.terrain_levels is not None:
+            self.curriculum.terrain_levels.func = mdp.terrain_levels_vel_hard
+            self.curriculum.terrain_levels.params = {
+                "asset_cfg": SceneEntityCfg("robot"),
+                "move_up_distance_ratio": 0.25,
+                "move_down_command_ratio": 0.25,
+                "move_down_min_distance": 0.70,
+            }
+
+        stair_weights = {
+            "lin_vel_z_l2": -0.55,
+            "ang_vel_xy_l2": -0.10,
+            "flat_orientation_l2": -0.45,
+            "base_height_l2": -0.12,
+            "body_lin_acc_l2": -0.018,
+            "joint_torques_l2": -1.5e-5,
+            "joint_acc_l2": -1.0e-7,
+            "joint_pos_limits": -2.2,
+            "joint_power": -1.0e-5,
+            "stand_still": -2.0,
+            "joint_pos_penalty": -0.45,
+            "action_rate_l2": -0.012,
+            "undesired_contacts": -1.4,
+            "contact_forces": -1.5e-4,
+            "track_lin_vel_xy_exp": 5.0,
+            "track_ang_vel_z_exp": 1.8,
+            "feet_air_time": 0.70,
+            "feet_air_time_variance": -0.12,
+            "feet_contact_without_cmd": 0.15,
+            "feet_slide": -0.20,
+            "feet_drag": -0.05,
+            "feet_height_body": -0.55,
+            "feet_gait": 0.10,
+            "upward": 0.80,
+        }
+
+        for attr_name, weight in stair_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.rewards.command_direction_progress = RewTerm(
+            func=mdp.command_direction_progress,
+            weight=2.0,
+            params={
+                "command_name": "base_velocity",
+                "command_threshold": 0.08,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.commanded_stall_penalty = RewTerm(
+            func=mdp.commanded_stall_penalty,
+            weight=-1.5,
+            params={
+                "command_name": "base_velocity",
+                "command_threshold": 0.08,
+                "min_progress_speed": 0.06,
+                "max_penalty": 2.0,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+
+        self.rewards.base_height_l2.params["target_height"] = DOG_ONLY_ROUGH_CHECKPOINT_BASE_HEIGHT
+        self.rewards.feet_air_time.params["threshold"] = 0.54
+        self.rewards.feet_height_body.params["target_height"] = -0.13
+        self.rewards.feet_height_body.params["tanh_mult"] = 1.30
+        self.rewards.feet_drag.params["penalty_feet_drag_height"] = 0.16
+        self.rewards.feet_drag.params["feet_drag_sigma"] = 0.035
+        self.rewards.feet_gait.params["command_threshold"] = 0.08
+        self.rewards.feet_gait.params["velocity_threshold"] = 0.16
+        self.rewards.feet_gait.params["max_err"] = 0.24
+
+        self.events.randomize_reset_base.params["pose_range"]["z"] = (0.0, 0.12)
+        self.events.randomize_reset_base.params["pose_range"]["roll"] = (-0.12, 0.12)
+        self.events.randomize_reset_base.params["pose_range"]["pitch"] = (-0.12, 0.12)
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.45, 1.20)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.35, 1.05)
 
         self.sim2sim_action_hold_prob = 0.035
         self.sim2sim_action_noise_std = 0.0025

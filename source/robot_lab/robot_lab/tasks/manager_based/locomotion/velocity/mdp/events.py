@@ -267,3 +267,83 @@ def reset_root_state_uniform(
         # set into the physics simulation
         asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=non_pit_env_ids)
         asset.write_root_velocity_to_sim(velocities, env_ids=non_pit_env_ids)
+
+
+def reset_root_state_along_pct_stair_path(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    path_progress_height_anchors: tuple[tuple[float, float], ...],
+    bottom_start_fraction: float,
+    path_start_offset: float,
+    mid_stair_pitch: float,
+    base_clearance: float,
+    lateral_offset_range: tuple[float, float],
+    forward_offset_range: tuple[float, float],
+    height_offset_range: tuple[float, float],
+    roll_range: tuple[float, float],
+    pitch_jitter_range: tuple[float, float],
+    yaw_jitter_range: tuple[float, float],
+    velocity_range: dict[str, tuple[float, float]],
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    """Reset a mixture of robots at the bottom and on measured PCT stair anchors.
+
+    The anchors belong to the same full-flight terrain used for evaluation.  A
+    subset of environments still starts at the bottom, while the remaining
+    environments start above measured tread heights so PPO receives experience
+    from the complete flight instead of only the first riser.
+    """
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+    if len(path_progress_height_anchors) == 0:
+        raise ValueError("path_progress_height_anchors must not be empty")
+    if not 0.0 <= bottom_start_fraction <= 1.0:
+        raise ValueError("bottom_start_fraction must be within [0, 1]")
+
+    count = len(env_ids)
+    device = asset.device
+    root_states = asset.data.default_root_state[env_ids].clone()
+    positions = root_states[:, 0:3] + env.scene.env_origins[env_ids]
+
+    anchors = torch.tensor(path_progress_height_anchors, dtype=torch.float32, device=device)
+    anchor_ids = torch.randint(0, len(path_progress_height_anchors), (count,), device=device)
+    selected_anchors = anchors[anchor_ids]
+    bottom_start = torch.rand(count, device=device) < bottom_start_fraction
+    selected_progress = torch.where(bottom_start, torch.zeros(count, device=device), selected_anchors[:, 0])
+    selected_height = torch.where(bottom_start, torch.zeros(count, device=device), selected_anchors[:, 1])
+
+    positions[:, 0] += math_utils.sample_uniform(
+        lateral_offset_range[0], lateral_offset_range[1], (count,), device=device
+    )
+    selected_path_offset = torch.where(
+        bottom_start, torch.zeros(count, device=device), torch.full((count,), path_start_offset, device=device)
+    )
+    positions[:, 1] += selected_path_offset + selected_progress + math_utils.sample_uniform(
+        forward_offset_range[0], forward_offset_range[1], (count,), device=device
+    )
+    mid_clearance = base_clearance + math_utils.sample_uniform(
+        height_offset_range[0], height_offset_range[1], (count,), device=device
+    )
+    positions[:, 2] += selected_height + torch.where(
+        bottom_start, torch.zeros(count, device=device), mid_clearance
+    )
+
+    roll = math_utils.sample_uniform(roll_range[0], roll_range[1], (count,), device=device)
+    pitch = math_utils.sample_uniform(
+        pitch_jitter_range[0], pitch_jitter_range[1], (count,), device=device
+    )
+    pitch += torch.where(bottom_start, torch.zeros(count, device=device), mid_stair_pitch)
+    yaw = math_utils.sample_uniform(yaw_jitter_range[0], yaw_jitter_range[1], (count,), device=device)
+    orientations_delta = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
+    orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
+
+    velocity_ranges = torch.tensor(
+        [velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]],
+        dtype=torch.float32,
+        device=device,
+    )
+    velocities = root_states[:, 7:13] + math_utils.sample_uniform(
+        velocity_ranges[:, 0], velocity_ranges[:, 1], (count, 6), device=device
+    )
+
+    asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
+    asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)

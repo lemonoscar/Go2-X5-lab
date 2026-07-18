@@ -824,13 +824,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     base_command_cfg, base_command_name = _resolve_base_command_cfg(env_cfg)
     if base_command_cfg is None:
         raise RuntimeError("Play requires an active base locomotion command term.")
+    base_command_ranges = getattr(base_command_cfg, "ranges", None)
+    if base_command_ranges is None and (args_cli.keyboard or args_cli.base_cmd is not None):
+        requested_mode = "--keyboard" if args_cli.keyboard else "--base_cmd"
+        raise ValueError(
+            f"{requested_mode} requires a ranged velocity command configuration, but "
+            f"{type(base_command_cfg).__name__} generates task-owned path commands. "
+            "Replay this task without a manual base-command override."
+        )
 
     controller = None
     if args_cli.keyboard:
         # Match teleop sensitivity to the task command ranges instead of pushing the policy outside training support.
-        lin_vel_x_max = max(abs(v) for v in base_command_cfg.ranges.lin_vel_x)
-        lin_vel_y_max = max(abs(v) for v in base_command_cfg.ranges.lin_vel_y)
-        ang_vel_z_max = max(abs(v) for v in base_command_cfg.ranges.ang_vel_z)
+        lin_vel_x_max = max(abs(v) for v in base_command_ranges.lin_vel_x)
+        lin_vel_y_max = max(abs(v) for v in base_command_ranges.lin_vel_y)
+        ang_vel_z_max = max(abs(v) for v in base_command_ranges.ang_vel_z)
         if hasattr(base_command_cfg, "rel_standing_envs"):
             base_command_cfg.rel_standing_envs = 0.0
         if hasattr(base_command_cfg, "rel_heading_envs"):
@@ -846,21 +854,30 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             base_command_cfg.rel_standing_envs = 0.0
         if hasattr(base_command_cfg, "rel_heading_envs"):
             base_command_cfg.rel_heading_envs = 0.0
-        base_command_cfg.ranges.lin_vel_x = (fixed_base_cmd_cfg[0], fixed_base_cmd_cfg[0])
-        base_command_cfg.ranges.lin_vel_y = (fixed_base_cmd_cfg[1], fixed_base_cmd_cfg[1])
-        base_command_cfg.ranges.ang_vel_z = (fixed_base_cmd_cfg[2], fixed_base_cmd_cfg[2])
+        base_command_ranges.lin_vel_x = (fixed_base_cmd_cfg[0], fixed_base_cmd_cfg[0])
+        base_command_ranges.lin_vel_y = (fixed_base_cmd_cfg[1], fixed_base_cmd_cfg[1])
+        base_command_ranges.ang_vel_z = (fixed_base_cmd_cfg[2], fixed_base_cmd_cfg[2])
         print(
             "[INFO] Play command fixed to "
             f"lin_x={fixed_base_cmd_cfg[0]:.3f}, lin_y={fixed_base_cmd_cfg[1]:.3f}, ang_z={fixed_base_cmd_cfg[2]:.3f}"
         )
     elif not args_cli.keyboard:
-        print(
-            "[INFO] Play uses the task command distribution "
-            f"lin_x={base_command_cfg.ranges.lin_vel_x}, "
-            f"lin_y={base_command_cfg.ranges.lin_vel_y}, "
-            f"ang_z={base_command_cfg.ranges.ang_vel_z}, "
-            f"stand={getattr(base_command_cfg, 'rel_standing_envs', 0.0):.2f}"
-        )
+        if base_command_ranges is not None:
+            print(
+                "[INFO] Play uses the task command distribution "
+                f"lin_x={base_command_ranges.lin_vel_x}, "
+                f"lin_y={base_command_ranges.lin_vel_y}, "
+                f"ang_z={base_command_ranges.ang_vel_z}, "
+                f"stand={getattr(base_command_cfg, 'rel_standing_envs', 0.0):.2f}"
+            )
+        else:
+            print(
+                "[INFO] Play uses the task-generated path command "
+                f"config={type(base_command_cfg).__name__}, "
+                f"forward_velocity={getattr(base_command_cfg, 'forward_velocity', 'task-defined')}, "
+                f"max_lateral_velocity={getattr(base_command_cfg, 'max_lateral_velocity', 'task-defined')}, "
+                f"max_angular_velocity={getattr(base_command_cfg, 'max_angular_velocity', 'task-defined')}"
+            )
     if args_cli.deterministic_playback:
         print(
             "[INFO] Deterministic playback enabled: observation corruption, material/mass/CoM DR, "

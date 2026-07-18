@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import torch
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import isaaclab.utils.math as math_utils
@@ -17,6 +18,71 @@ from isaaclab.utils.math import quat_apply_inverse, yaw_quat
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
+
+
+def _vx_tracking_tolerance(
+    command_x: torch.Tensor,
+    absolute_tolerance: float,
+    relative_tolerance: float,
+) -> torch.Tensor:
+    """Return the user-facing vx tolerance with an absolute low-speed floor."""
+    return torch.maximum(
+        torch.full_like(command_x, absolute_tolerance),
+        torch.abs(command_x) * relative_tolerance,
+    )
+
+
+def track_vx_tolerance_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    absolute_tolerance: float = 0.1,
+    relative_tolerance: float = 0.1,
+    outside_tolerance_std: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward vx tracking with a flat optimum inside the accepted error band."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command_x = env.command_manager.get_command(command_name)[:, 0]
+    tolerance = _vx_tracking_tolerance(command_x, absolute_tolerance, relative_tolerance)
+    excess_error = torch.clamp(torch.abs(command_x - asset.data.root_lin_vel_b[:, 0]) - tolerance, min=0.0)
+    reward = torch.exp(-torch.square(excess_error / max(outside_tolerance_std, 1.0e-6)))
+    return reward * _reward_upright_scale(env)
+
+
+def vx_tracking_excess_l1(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    absolute_tolerance: float = 0.1,
+    relative_tolerance: float = 0.1,
+    max_penalty: float = 4.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize only the vx error that exceeds the accepted error band."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command_x = env.command_manager.get_command(command_name)[:, 0]
+    tolerance = _vx_tracking_tolerance(command_x, absolute_tolerance, relative_tolerance)
+    excess_error = torch.clamp(torch.abs(command_x - asset.data.root_lin_vel_b[:, 0]) - tolerance, min=0.0)
+    return torch.clamp(excess_error / torch.clamp(tolerance, min=1.0e-6), max=max_penalty)
+
+
+def uncommanded_velocity_excess_l1(
+    env: ManagerBasedRLEnv,
+    lateral_tolerance: float = 0.1,
+    yaw_tolerance: float = 0.1,
+    max_penalty: float = 4.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize lateral and yaw drift only outside their accepted bands."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    lateral_excess = torch.clamp(
+        torch.abs(asset.data.root_lin_vel_b[:, 1]) - lateral_tolerance,
+        min=0.0,
+    ) / max(lateral_tolerance, 1.0e-6)
+    yaw_excess = torch.clamp(
+        torch.abs(asset.data.root_ang_vel_b[:, 2]) - yaw_tolerance,
+        min=0.0,
+    ) / max(yaw_tolerance, 1.0e-6)
+    return torch.clamp(lateral_excess + yaw_excess, max=max_penalty)
 
 
 def track_lin_vel_xy_exp(
@@ -73,6 +139,264 @@ def track_ang_vel_z_world_exp(
     reward = torch.exp(-ang_vel_error / std**2)
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
+
+
+def _command_direction_speed(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return signed planar speed along the commanded direction and command magnitude."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command_xy = env.command_manager.get_command(command_name)[:, :2]
+    command_magnitude = torch.linalg.norm(command_xy, dim=1)
+    command_direction = command_xy / torch.clamp(command_magnitude, min=1.0e-6).unsqueeze(1)
+    signed_speed = torch.sum(asset.data.root_lin_vel_b[:, :2] * command_direction, dim=1)
+    return signed_speed, command_magnitude
+
+
+def command_direction_progress(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward signed planar speed along a non-zero velocity command."""
+    signed_speed, command_magnitude = _command_direction_speed(env, command_name, asset_cfg)
+    active_command = (command_magnitude > command_threshold).to(signed_speed.dtype)
+    return signed_speed * active_command * _reward_upright_scale(env)
+
+
+def commanded_stall_penalty(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    command_threshold: float,
+    min_progress_speed: float,
+    max_penalty: float = 2.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize low or reverse progress while a planar velocity command is active."""
+    signed_speed, command_magnitude = _command_direction_speed(env, command_name, asset_cfg)
+    normalizer = max(float(min_progress_speed), 1.0e-6)
+    deficit = torch.clamp((min_progress_speed - signed_speed) / normalizer, min=0.0, max=max_penalty)
+    active_command = (command_magnitude > command_threshold).to(signed_speed.dtype)
+    return deficit * active_command * _reward_upright_scale(env)
+
+
+class PctStairPathProgressReward(ManagerTermBase):
+    """Reward signed centerline progress only while height, contact, and posture remain valid."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.nonfoot_body_ids = cfg.params["sensor_cfg"].body_ids
+        self.previous_progress = torch.zeros(self.num_envs, device=self.device)
+        self.just_reset = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+
+    def reset(self, env_ids: Sequence[int] | None = None) -> None:
+        if env_ids is None:
+            env_ids = slice(None)
+        self.previous_progress[env_ids] = 0.0
+        self.just_reset[env_ids] = True
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        height_tracking_std: float,
+        contact_force_threshold: float,
+        maximum_progress_speed: float,
+        maximum_regress_speed: float,
+        regression_scale: float,
+        sensor_cfg: SceneEntityCfg,
+        minimum_upright_projection: float = 0.0,
+    ) -> torch.Tensor:
+        del sensor_cfg
+        command_term = env.command_manager.get_term(command_name)
+        current_progress = command_term.path_progress_m
+        progress_speed = (current_progress - self.previous_progress) / max(env.step_dt, 1.0e-6)
+        self.previous_progress.copy_(current_progress)
+        progress_speed = torch.where(self.just_reset, torch.zeros_like(progress_speed), progress_speed)
+        self.just_reset.fill_(False)
+        progress_speed = torch.clamp(
+            progress_speed,
+            min=-maximum_regress_speed,
+            max=maximum_progress_speed,
+        )
+
+        height_error = command_term.height_gain_m - command_term.expected_height_gain_m
+        height_gate = torch.exp(-torch.square(height_error) / max(height_tracking_std**2, 1.0e-6))
+        nonfoot_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.nonfoot_body_ids, :]
+        maximum_nonfoot_force = torch.linalg.norm(nonfoot_forces, dim=-1).amax(dim=(1, 2))
+        contact_gate = (maximum_nonfoot_force < contact_force_threshold).to(torch.float32)
+        upright_gate = _reward_upright_scale(env)
+        if minimum_upright_projection > 0.0:
+            upright_projection = -env.scene["robot"].data.projected_gravity_b[:, 2]
+            upright_gate *= (upright_projection >= minimum_upright_projection).to(torch.float32)
+        safe_progress_gate = height_gate * contact_gate * upright_gate
+
+        return torch.where(
+            progress_speed >= 0.0,
+            progress_speed * safe_progress_gate,
+            regression_scale * progress_speed,
+        )
+
+
+class PctRearFootSupportReward(ManagerTermBase):
+    """Reward forward motion supported by rear feet that have caught up on the stairs."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.robot: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.asset_foot_ids = cfg.params["asset_cfg"].body_ids
+        self.sensor_foot_ids = cfg.params["sensor_cfg"].body_ids
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        maximum_progress_lag: float,
+        progress_lag_std: float,
+        maximum_height_lag: float,
+        height_lag_std: float,
+        activation_progress: float,
+        activation_width: float,
+        contact_force_threshold: float,
+        command_threshold: float,
+        target_speed: float,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        del sensor_cfg, asset_cfg
+        command_term = env.command_manager.get_term(command_name)
+
+        path_vector = command_term.path_points_xy[-1] - command_term.path_points_xy[0]
+        path_tangent = path_vector / torch.clamp(torch.linalg.norm(path_vector), min=1.0e-6)
+        rear_foot_xy = (
+            self.robot.data.body_pos_w[:, self.asset_foot_ids, :2]
+            - env.scene.env_origins[:, None, :2]
+        )
+        rear_foot_progress = torch.sum(
+            (rear_foot_xy - command_term.path_points_xy[0]) * path_tangent,
+            dim=2,
+        )
+        progress_lag = command_term.path_progress_m[:, None] - rear_foot_progress
+        progress_excess = torch.clamp(progress_lag - maximum_progress_lag, min=0.0)
+        progress_quality = torch.exp(
+            -torch.square(progress_excess) / max(progress_lag_std**2, 1.0e-6)
+        )
+
+        rear_foot_height_gain = (
+            self.robot.data.body_pos_w[:, self.asset_foot_ids, 2]
+            - env.scene.env_origins[:, None, 2]
+        )
+        minimum_support_height = command_term.expected_height_gain_m[:, None] - maximum_height_lag
+        height_deficit = torch.clamp(minimum_support_height - rear_foot_height_gain, min=0.0)
+        height_quality = torch.exp(
+            -torch.square(height_deficit) / max(height_lag_std**2, 1.0e-6)
+        )
+
+        rear_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.sensor_foot_ids, :]
+        rear_contact = (
+            torch.linalg.norm(rear_forces, dim=-1).amax(dim=1) > contact_force_threshold
+        ).to(torch.float32)
+        support_quality = torch.mean(progress_quality * height_quality * rear_contact, dim=1)
+
+        signed_speed, command_magnitude = _command_direction_speed(
+            env, command_name, SceneEntityCfg("robot")
+        )
+        speed_gate = torch.clamp(signed_speed / max(target_speed, 1.0e-6), min=0.0, max=1.0)
+        command_gate = (command_magnitude > command_threshold).to(torch.float32)
+        activation_gate = torch.clamp(
+            (command_term.path_progress_m - activation_progress) / max(activation_width, 1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+        return support_quality * speed_gate * command_gate * activation_gate * _reward_upright_scale(env)
+
+
+def pct_stair_height_alignment(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    height_tracking_std: float,
+    command_threshold: float,
+    target_speed: float,
+) -> torch.Tensor:
+    """Reward forward motion when root height follows the active PCT path segment."""
+    command_term = env.command_manager.get_term(command_name)
+    height_error = command_term.height_gain_m - command_term.expected_height_gain_m
+    height_alignment = torch.exp(-torch.square(height_error) / max(height_tracking_std**2, 1.0e-6))
+    signed_speed, command_magnitude = _command_direction_speed(
+        env, command_name, SceneEntityCfg("robot")
+    )
+    speed_gate = torch.clamp(signed_speed / max(target_speed, 1.0e-6), min=0.0, max=1.0)
+    active_command = (command_magnitude > command_threshold).to(torch.float32)
+    return height_alignment * speed_gate * active_command * _reward_upright_scale(env)
+
+
+def pct_stair_base_clearance_deficit(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    clearance_margin: float,
+    maximum_deficit: float,
+    command_threshold: float,
+) -> torch.Tensor:
+    """Penalize the root falling below a small clearance margin above the PCT path."""
+    command_term = env.command_manager.get_term(command_name)
+    desired_height_gain = command_term.expected_height_gain_m + clearance_margin
+    deficit = torch.clamp(
+        (desired_height_gain - command_term.height_gain_m) / max(maximum_deficit, 1.0e-6),
+        min=0.0,
+        max=1.0,
+    )
+    command_magnitude = torch.linalg.norm(env.command_manager.get_command(command_name)[:, :2], dim=1)
+    active_command = (command_magnitude > command_threshold).to(torch.float32)
+    return deficit * active_command * _reward_upright_scale(env)
+
+
+def pct_stair_cross_track_alignment(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    cross_track_std: float,
+    command_threshold: float,
+    target_speed: float,
+) -> torch.Tensor:
+    """Reward forward motion close to the PCT centerline."""
+    command_term = env.command_manager.get_term(command_name)
+    centerline_alignment = torch.exp(
+        -torch.square(command_term.cross_track_error_m) / max(cross_track_std**2, 1.0e-6)
+    )
+    signed_speed, command_magnitude = _command_direction_speed(
+        env, command_name, SceneEntityCfg("robot")
+    )
+    speed_gate = torch.clamp(signed_speed / max(target_speed, 1.0e-6), min=0.0, max=1.0)
+    active_command = (command_magnitude > command_threshold).to(torch.float32)
+    return centerline_alignment * speed_gate * active_command * _reward_upright_scale(env)
+
+
+def pct_stair_completion_bonus(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    contact_force_threshold: float,
+    maximum_root_ang_vel_xy: float,
+    maximum_root_lin_vel_z: float,
+    minimum_upright_projection: float,
+    maximum_cross_track_error: float,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """Reward completion only when the same step also satisfies the safety gates."""
+    command_term = env.command_manager.get_term(command_name)
+    upright = -env.scene["robot"].data.projected_gravity_b[:, 2] >= minimum_upright_projection
+    inside_corridor = torch.abs(command_term.cross_track_error_m) <= maximum_cross_track_error
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :]
+    contact_safe = torch.linalg.norm(forces, dim=-1).amax(dim=(1, 2)) < contact_force_threshold
+    robot = env.scene["robot"]
+    dynamically_stable = torch.linalg.norm(robot.data.root_ang_vel_b[:, :2], dim=1) <= maximum_root_ang_vel_xy
+    dynamically_stable &= torch.abs(robot.data.root_lin_vel_b[:, 2]) <= maximum_root_lin_vel_z
+    safe_completion = command_term.path_completed & upright & inside_corridor & contact_safe & dynamically_stable
+    return safe_completion.to(torch.float32)
 
 
 def joint_power(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
