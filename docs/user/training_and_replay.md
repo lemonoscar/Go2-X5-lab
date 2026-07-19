@@ -486,6 +486,33 @@ The R1 runner saves every 100 updates. Do not accept a checkpoint from terrain l
 `26/32` on the separate fixed-ascent task, then repeat all eight flat vx points. Any flat failure sends the checkpoint back to the
 last Pareto point for unified rehearsal before descent training.
 
+### R2 Sim2Real branch from model 37000
+
+Run this as an independent branch while R1 continues. Physical GPU3 is the only exposed card, so the process still uses
+`cuda:0`; load actor/critic but intentionally start a fresh optimizer:
+
+```bash
+env CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=3 \
+  PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+python -B scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyPctRegularAscentSim2Real-v0 \
+  --num_envs 512 \
+  --max_iterations 2000 \
+  --seed 1 \
+  --resume \
+  --checkpoint logs/rsl_rl/go2_x5_dog_only_pct_regular_ascent_repair/2026-07-18_23-18-34_regular_ascent_repair_from36249_seed0_long2000/model_37000.pt \
+  --no_load_optimizer \
+  --run_name regular_ascent_sim2real_from37000_seed1_long2000 \
+  --logger tensorboard \
+  --device cuda:0 \
+  --headless
+```
+
+The R2 task changes only the training distribution: nominal/5%-irregular risers, broader friction/mass/COM/gain sampling,
+20 ms policy sensor delay, 20--40 ms action delay, stronger observation/action noise, and a small 15--20-second planar push.
+It keeps the R1 reward and safety contract and preserves `260 -> 12`. Keep `model_37000.pt` as the immutable baseline; an R2
+checkpoint is accepted only if fixed `0.157 m` ascent does not regress and all eight flat vx points still pass.
+
 ## Unified Rough/Stairs/Vx 10k Training (completed)
 
 The unified task keeps DogOnly `260 -> 12`, restores the checkpoint pose used by `model_26250.pt`, trains explicit up/down stair

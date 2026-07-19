@@ -6,11 +6,13 @@
 import math
 
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.terrains import TerrainGeneratorCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 
 import robot_lab.tasks.manager_based.locomotion.velocity.mdp as mdp
 
@@ -154,6 +156,48 @@ PCT_REGULAR_ASCENT_CURRICULUM_TERRAIN_CFG = TerrainGeneratorCfg(
             ),
             top_platform_exit_length=PCT_REGULAR_STAIR_TOP_EXIT_M,
             riser_variation=0.0,
+        ),
+    },
+)
+
+
+PCT_REGULAR_ASCENT_SIM2REAL_TERRAIN_CFG = TerrainGeneratorCfg(
+    curriculum=True,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=10,
+    num_cols=32,
+    horizontal_scale=0.05,
+    vertical_scale=0.005,
+    slope_threshold=0.80,
+    difficulty_range=(0.0, 1.0),
+    use_cache=False,
+    sub_terrains={
+        "pct_regular_nominal": PctStraightStairsTerrainCfg(
+            proportion=0.5,
+            route_width=PCT_REGULAR_STAIR_WIDTH_M,
+            approach_length=PCT_REGULAR_STAIR_APPROACH_M,
+            flight_run=PCT_REGULAR_STAIR_FLIGHT_RUN_M,
+            flight_steps=PCT_REGULAR_STAIR_COUNT,
+            step_height_range=(
+                PCT_REGULAR_ASCENT_MIN_RISER_M,
+                PCT_REGULAR_STAIR_RISER_M,
+            ),
+            top_platform_exit_length=PCT_REGULAR_STAIR_TOP_EXIT_M,
+            riser_variation=0.0,
+        ),
+        "pct_regular_irregular": PctStraightStairsTerrainCfg(
+            proportion=0.5,
+            route_width=PCT_REGULAR_STAIR_WIDTH_M,
+            approach_length=PCT_REGULAR_STAIR_APPROACH_M,
+            flight_run=PCT_REGULAR_STAIR_FLIGHT_RUN_M,
+            flight_steps=PCT_REGULAR_STAIR_COUNT,
+            step_height_range=(
+                PCT_REGULAR_ASCENT_MIN_RISER_M,
+                PCT_REGULAR_STAIR_RISER_M,
+            ),
+            top_platform_exit_length=PCT_REGULAR_STAIR_TOP_EXIT_M,
+            riser_variation=0.05,
         ),
     },
 )
@@ -985,6 +1029,87 @@ class Go2X5DogOnlyPctRegularAscentRepairEnvCfg(
         )
         self.terminations.bad_orientation.params["limit_angle"] = formal_tilt_limit
         self.terminations.root_ang_vel_xy_above_maximum.params["maximum_speed"] = 4.0
+
+
+@configclass
+class Go2X5DogOnlyPctRegularAscentSim2RealEnvCfg(
+    Go2X5DogOnlyPctRegularAscentRepairEnvCfg
+):
+    """Consolidate exact ascent under measured Sim2Real uncertainty."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.scene.terrain.terrain_generator = (
+            PCT_REGULAR_ASCENT_SIM2REAL_TERRAIN_CFG.copy()
+        )
+        self.scene.terrain.max_init_terrain_level = 4
+
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (
+            0.45,
+            1.25,
+        )
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (
+            0.35,
+            1.10,
+        )
+        self.events.randomize_rigid_body_material.params["restitution_range"] = (
+            0.0,
+            0.20,
+        )
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (
+            0.90,
+            1.10,
+        )
+        self.events.randomize_rigid_body_mass_others.params[
+            "mass_distribution_params"
+        ] = (0.95, 1.05)
+        self.events.randomize_com_positions.params["com_range"] = {
+            "x": (-0.015, 0.015),
+            "y": (-0.015, 0.015),
+            "z": (-0.015, 0.015),
+        }
+        self.events.randomize_actuator_gains.params[
+            "stiffness_distribution_params"
+        ] = (0.85, 1.15)
+        self.events.randomize_actuator_gains.params[
+            "damping_distribution_params"
+        ] = (0.85, 1.15)
+        self.events.randomize_push_robot = EventTerm(
+            func=mdp.push_by_setting_velocity,
+            mode="interval",
+            interval_range_s=(15.0, 20.0),
+            params={"velocity_range": {"x": (-0.12, 0.12), "y": (-0.12, 0.12)}},
+        )
+
+        self.observations.policy.base_lin_vel.noise = Unoise(n_min=-0.12, n_max=0.12)
+        self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.04, n_max=0.04)
+        self.observations.policy.projected_gravity.noise = Unoise(
+            n_min=-0.03, n_max=0.03
+        )
+        self.observations.policy.joint_pos.noise = Unoise(n_min=-0.015, n_max=0.015)
+        self.observations.policy.joint_vel.noise = Unoise(n_min=-2.0, n_max=2.0)
+        self.observations.policy.height_scan.noise = Unoise(n_min=-0.12, n_max=0.12)
+
+        self.sim2sim_obs_delay_steps = 1
+        delayed_sensor_terms = (
+            ("base_lin_vel", mdp.delayed_base_lin_vel),
+            ("base_ang_vel", mdp.delayed_base_ang_vel),
+            ("projected_gravity", mdp.delayed_projected_gravity),
+            ("joint_pos", mdp.delayed_joint_pos_rel),
+            ("joint_vel", mdp.delayed_joint_vel_rel),
+            ("height_scan", mdp.delayed_height_scan),
+        )
+        for term_name, func in delayed_sensor_terms:
+            term = getattr(self.observations.policy, term_name)
+            term.func = func
+            if term.params is None:
+                term.params = {}
+            term.params["delay_steps"] = self.sim2sim_obs_delay_steps
+
+        self.sim2sim_action_delay_range = (1, 2)
+        self.sim2sim_action_hold_prob = 0.04
+        self.sim2sim_action_noise_std = 0.003
 
 
 @configclass

@@ -83,6 +83,17 @@ def delayed_projected_gravity(env: ManagerBasedEnv, delay_steps: int = 1) -> tor
     return _delay_signal(env, "projected_gravity", value, delay_steps)
 
 
+def delayed_height_scan(
+    env: ManagerBasedEnv,
+    sensor_cfg: SceneEntityCfg,
+    offset: float = 0.5,
+    delay_steps: int = 1,
+) -> torch.Tensor:
+    """Return a height scan delayed without changing its flattened shape."""
+    value = core_mdp.height_scan(env, sensor_cfg=sensor_cfg, offset=offset)
+    return _delay_signal(env, f"height_scan_{sensor_cfg.name}", value, delay_steps)
+
+
 def delayed_joint_pos_rel(
     env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), delay_steps: int = 1
 ) -> torch.Tensor:

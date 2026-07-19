@@ -438,6 +438,22 @@ class Go2X5DogOnlyPctRegularAscentRepairPPORunnerCfg(
 
 
 @configclass
+class Go2X5DogOnlyPctRegularAscentSim2RealPPORunnerCfg(
+    Go2X5DogOnlyPctRegularAscentRepairPPORunnerCfg
+):
+    """Low-rate R2 consolidation under Sim2Real randomization."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.max_iterations = 2000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_pct_regular_ascent_sim2real"
+        self.algorithm.entropy_coef = 0.001
+        self.algorithm.learning_rate = 5.0e-6
+
+
+@configclass
 class Go2X5DogOnlyPctRegularDescentStartPPORunnerCfg(
     Go2X5DogOnlyPctRegularUpDownStairsPPORunnerCfg
 ):
