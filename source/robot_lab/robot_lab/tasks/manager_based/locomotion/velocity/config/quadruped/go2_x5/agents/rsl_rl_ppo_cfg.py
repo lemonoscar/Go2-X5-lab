@@ -421,6 +421,23 @@ class Go2X5DogOnlyPctRegularAscentCurriculumPPORunnerCfg(
 
 
 @configclass
+class Go2X5DogOnlyPctRegularAscentRepairPPORunnerCfg(
+    Go2X5DogOnlyPctRegularAscentCurriculumPPORunnerCfg
+):
+    """Low-rate R1 continuation from the unified model on exact ascent."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 48
+        self.max_iterations = 2000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_pct_regular_ascent_repair"
+        self.algorithm.entropy_coef = 0.001
+        self.algorithm.learning_rate = 1.0e-5
+
+
+@configclass
 class Go2X5DogOnlyPctRegularDescentStartPPORunnerCfg(
     Go2X5DogOnlyPctRegularUpDownStairsPPORunnerCfg
 ):

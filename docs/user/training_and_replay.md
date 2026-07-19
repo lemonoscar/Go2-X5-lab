@@ -460,11 +460,37 @@ Only after the local descent gate reaches at least `26/32` should its best actor
 at least 32 robust episodes per seed, and at least 80% complete ascent-platform-descent success. The evaluator records each
 episode's start progress and height so top-start results cannot be confused with full-route results.
 
-## Unified Rough/Stairs/Vx 10k Training
+### R1 repair from the completed unified checkpoint
+
+The completed unified `model_36249.pt` passes every retained flat `vx=0.0..0.7 m/s` point but does not pass the fixed staircase.
+Start the additive R1 task with a fresh optimizer; the checkpoint's actor/critic and global iteration are still restored:
+
+```bash
+env CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=2 \
+  PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+python -B scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyPctRegularAscentRepair-v0 \
+  --num_envs 512 \
+  --max_iterations 2000 \
+  --seed 0 \
+  --resume \
+  --checkpoint logs/rsl_rl/go2_x5_dog_only_rough_stairs_vx/2026-07-17_23-45-05_curriculum10k_v4_vx070_rehearsal35_from26300_seed0/model_36249.pt \
+  --no_load_optimizer \
+  --run_name regular_ascent_repair_from36249_seed0_long2000 \
+  --logger tensorboard \
+  --device cuda:0 \
+  --headless
+```
+
+The R1 runner saves every 100 updates. Do not accept a checkpoint from terrain level or reward alone: first require at least
+`26/32` on the separate fixed-ascent task, then repeat all eight flat vx points. Any flat failure sends the checkpoint back to the
+last Pareto point for unified rehearsal before descent training.
+
+## Unified Rough/Stairs/Vx 10k Training (completed)
 
 The unified task keeps DogOnly `260 -> 12`, restores the checkpoint pose used by `model_26250.pt`, trains explicit up/down stair
 columns, and treats any vx error up to `0.1 m/s` as acceptable. After the requested maximum was reduced to `0.7 m/s`, the
-repository includes the accepted 50-update continuation checkpoint. Start the remaining 9950 updates with:
+accepted 50-update checkpoint seeded the remaining 9950-update run. The historical command was:
 
 ```bash
 env PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
@@ -490,8 +516,13 @@ SHA-256: 43cdeb52a1ef3f2d562cd481b52343a3e424600bfd9319ccec199eb2693e93ac
 ```
 
 The checkpoint contains actor, critic, optimizer, and global iteration `26300`. Because the command deliberately omits
-`--no_load_optimizer`, it retains that optimizer state and ends at global iteration `36250`; the next new gate is
-`model_26400.pt`. No training process is left running by this repository handoff.
+`--no_load_optimizer`, the continuation retained that optimizer state. RSL-RL's zero-based final save is `model_36249.pt`:
+
+```text
+logs/rsl_rl/go2_x5_dog_only_rough_stairs_vx/
+  2026-07-17_23-45-05_curriculum10k_v4_vx070_rehearsal35_from26300_seed0/model_36249.pt
+SHA-256: 013cd98e4ea60bf9390c5094c515bfe8783d6d5ecbc799e95b3660c53bb4030f
+```
 
 The final seed-0 handoff evaluation passed all eight steady-state segments from `0.0` through `0.7 m/s`. At `0.7 m/s`, measured
 mean/RMSE were `0.618/0.083 m/s`; the diagnostic stop immediately after the maximum-speed segment also passed with
@@ -499,9 +530,10 @@ mean/RMSE were `0.618/0.083 m/s`; the diagnostic stop immediately after the maxi
 
 The earlier `10-26-35_curriculum10k_from26250_seed0` launch was stopped at about 27 updates because its first speed-bin promotion
 occurred before the intended 250-update warm-up. V2 produced `model_26300.pt`; it passed all retained `0.0--0.7 m/s` points.
-The short V3 rehearsal launch was stopped without a checkpoint when the maximum-speed requirement changed. A V4 startup audit
-then reached iteration `26317` before being stopped at the user's request; it produced no newer checkpoint and is not a candidate.
-The bundled `model_26300.pt` remains the clean continuation point.
+The short V3 rehearsal launch was stopped without a checkpoint when the maximum-speed requirement changed. An initial V4 startup
+audit stopped at `26317`; the later server V4 run used the same accepted configuration and completed at `36249`. Its formal flat
+gate passed `8/8`, but exact ascent, descent-start, and full up/down each scored `0/32`, so it is the R1 source rather than a final
+deployment candidate.
 
 Evaluate a candidate on deterministic flat terrain over `vx=0.0,0.1,...,0.7 m/s`, including zero speed and the
 post-maximum-speed stopping diagnostic:

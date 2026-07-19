@@ -966,6 +966,28 @@ class Go2X5DogOnlyPctRegularAscentCurriculumEnvCfg(
 
 
 @configclass
+class Go2X5DogOnlyPctRegularAscentRepairEnvCfg(
+    Go2X5DogOnlyPctRegularAscentCurriculumEnvCfg
+):
+    """Repair exact ascent without a dead zone before the formal tilt limit."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # The source unified task allowed substantially larger tilt, while the
+        # fixed-stair evaluator terminates at 32 degrees.  The inherited exact
+        # task already supplies a continuous posture cost and a failure cost;
+        # keep both and let safe path progress remain active up to that same
+        # formal boundary instead of disappearing at the inherited 30 degrees.
+        formal_tilt_limit = math.radians(32.0)
+        self.rewards.pct_path_progress.params["minimum_upright_projection"] = math.cos(
+            formal_tilt_limit
+        )
+        self.terminations.bad_orientation.params["limit_angle"] = formal_tilt_limit
+        self.terminations.root_ang_vel_xy_above_maximum.params["maximum_speed"] = 4.0
+
+
+@configclass
 class Go2X5DogOnlyPctRegularUpDownStairsEnvCfg(
     Go2X5DogOnlyPctRegularStairsEnvCfg
 ):
