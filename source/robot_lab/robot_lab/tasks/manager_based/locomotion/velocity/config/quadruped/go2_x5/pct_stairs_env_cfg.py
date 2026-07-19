@@ -1079,7 +1079,7 @@ class Go2X5DogOnlyPctRegularAscentSim2RealEnvCfg(
             func=mdp.push_by_setting_velocity,
             mode="interval",
             interval_range_s=(15.0, 20.0),
-            params={"velocity_range": {"x": (-0.12, 0.12), "y": (-0.12, 0.12)}},
+            params={"velocity_range": {"x": (-0.03, 0.03), "y": (-0.03, 0.03)}},
         )
 
         self.observations.policy.base_lin_vel.noise = Unoise(n_min=-0.12, n_max=0.12)
@@ -1092,6 +1092,9 @@ class Go2X5DogOnlyPctRegularAscentSim2RealEnvCfg(
         self.observations.policy.height_scan.noise = Unoise(n_min=-0.12, n_max=0.12)
 
         self.sim2sim_obs_delay_steps = 1
+        # Ramp one-frame sensor latency over the first 500 PPO updates
+        # (48 policy steps/update) so model_37000 does not see a discontinuity.
+        self.sim2sim_obs_delay_blend_steps = 24_000
         delayed_sensor_terms = (
             ("base_lin_vel", mdp.delayed_base_lin_vel),
             ("base_ang_vel", mdp.delayed_base_ang_vel),
@@ -1106,6 +1109,7 @@ class Go2X5DogOnlyPctRegularAscentSim2RealEnvCfg(
             if term.params is None:
                 term.params = {}
             term.params["delay_steps"] = self.sim2sim_obs_delay_steps
+            term.params["blend_steps"] = self.sim2sim_obs_delay_blend_steps
 
         self.sim2sim_action_delay_range = (1, 2)
         self.sim2sim_action_hold_prob = 0.04

@@ -27,7 +27,13 @@ def joint_pos_rel_without_wheel(
     return joint_pos_rel
 
 
-def _delay_signal(env: ManagerBasedEnv, key: str, value: torch.Tensor, delay_steps: int) -> torch.Tensor:
+def _delay_signal(
+    env: ManagerBasedEnv,
+    key: str,
+    value: torch.Tensor,
+    delay_steps: int,
+    blend_steps: int = 0,
+) -> torch.Tensor:
     if delay_steps <= 0:
         return value
     state = getattr(env, "_sim2sim_delay_state", None)
@@ -65,22 +71,36 @@ def _delay_signal(env: ManagerBasedEnv, key: str, value: torch.Tensor, delay_ste
         entry["last_step"] = step_counter
 
     read_idx = (entry["idx"] - 1 - delay_steps) % buffer_size
-    return entry["buffer"][read_idx]
+    delayed_value = entry["buffer"][read_idx]
+    if blend_steps <= 0:
+        return delayed_value
+
+    # A checkpoint trained without sensor latency can destabilize if a full
+    # frame of delay is enabled abruptly. Blend from the current sample to the
+    # delayed sample using simulator policy steps, while preserving shape.
+    blend = min(max(float(step_counter) / float(blend_steps), 0.0), 1.0)
+    return torch.lerp(value, delayed_value, blend)
 
 
-def delayed_base_lin_vel(env: ManagerBasedEnv, delay_steps: int = 1) -> torch.Tensor:
+def delayed_base_lin_vel(
+    env: ManagerBasedEnv, delay_steps: int = 1, blend_steps: int = 0
+) -> torch.Tensor:
     value = core_mdp.base_lin_vel(env)
-    return _delay_signal(env, "base_lin_vel", value, delay_steps)
+    return _delay_signal(env, "base_lin_vel", value, delay_steps, blend_steps)
 
 
-def delayed_base_ang_vel(env: ManagerBasedEnv, delay_steps: int = 1) -> torch.Tensor:
+def delayed_base_ang_vel(
+    env: ManagerBasedEnv, delay_steps: int = 1, blend_steps: int = 0
+) -> torch.Tensor:
     value = core_mdp.base_ang_vel(env)
-    return _delay_signal(env, "base_ang_vel", value, delay_steps)
+    return _delay_signal(env, "base_ang_vel", value, delay_steps, blend_steps)
 
 
-def delayed_projected_gravity(env: ManagerBasedEnv, delay_steps: int = 1) -> torch.Tensor:
+def delayed_projected_gravity(
+    env: ManagerBasedEnv, delay_steps: int = 1, blend_steps: int = 0
+) -> torch.Tensor:
     value = core_mdp.projected_gravity(env)
-    return _delay_signal(env, "projected_gravity", value, delay_steps)
+    return _delay_signal(env, "projected_gravity", value, delay_steps, blend_steps)
 
 
 def delayed_height_scan(
@@ -88,24 +108,33 @@ def delayed_height_scan(
     sensor_cfg: SceneEntityCfg,
     offset: float = 0.5,
     delay_steps: int = 1,
+    blend_steps: int = 0,
 ) -> torch.Tensor:
     """Return a height scan delayed without changing its flattened shape."""
     value = core_mdp.height_scan(env, sensor_cfg=sensor_cfg, offset=offset)
-    return _delay_signal(env, f"height_scan_{sensor_cfg.name}", value, delay_steps)
+    return _delay_signal(
+        env, f"height_scan_{sensor_cfg.name}", value, delay_steps, blend_steps
+    )
 
 
 def delayed_joint_pos_rel(
-    env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), delay_steps: int = 1
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    delay_steps: int = 1,
+    blend_steps: int = 0,
 ) -> torch.Tensor:
     value = core_mdp.joint_pos_rel(env, asset_cfg=asset_cfg)
-    return _delay_signal(env, "joint_pos_rel", value, delay_steps)
+    return _delay_signal(env, "joint_pos_rel", value, delay_steps, blend_steps)
 
 
 def delayed_joint_vel_rel(
-    env: ManagerBasedEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"), delay_steps: int = 1
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    delay_steps: int = 1,
+    blend_steps: int = 0,
 ) -> torch.Tensor:
     value = core_mdp.joint_vel_rel(env, asset_cfg=asset_cfg)
-    return _delay_signal(env, "joint_vel_rel", value, delay_steps)
+    return _delay_signal(env, "joint_vel_rel", value, delay_steps, blend_steps)
 
 
 def delayed_generated_commands(

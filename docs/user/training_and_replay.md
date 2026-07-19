@@ -509,9 +509,10 @@ python -B scripts/reinforcement_learning/rsl_rl/train.py \
 ```
 
 The R2 task changes only the training distribution: nominal/5%-irregular risers, broader friction/mass/COM/gain sampling,
-20 ms policy sensor delay, 20--40 ms action delay, stronger observation/action noise, and a small 15--20-second planar push.
-It keeps the R1 reward and safety contract and preserves `260 -> 12`. Keep `model_37000.pt` as the immutable baseline; an R2
-checkpoint is accepted only if fixed `0.157 m` ascent does not regress and all eight flat vx points still pass.
+a policy sensor delay blended from 0 to 20 ms over the first 500 updates, 20--40 ms action delay, stronger observation/action
+noise, and a very light `x/y ±0.03 m/s` planar push every 15--20 seconds. It keeps the R1 reward and safety contract and
+preserves `260 -> 12`. Keep `model_37000.pt` as the immutable baseline; an R2 checkpoint is accepted only if fixed `0.157 m`
+ascent does not regress and all eight flat vx points still pass.
 
 ## Unified Rough/Stairs/Vx 10k Training (completed)
 
