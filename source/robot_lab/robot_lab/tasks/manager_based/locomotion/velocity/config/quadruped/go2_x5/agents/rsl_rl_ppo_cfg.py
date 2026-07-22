@@ -136,6 +136,45 @@ class Go2X5DogOnlyCrawlFlatPPORunnerCfg(Go2X5DogOnlyRecoverFlatPPORunnerCfg):
 
 
 @configclass
+class Go2X5DogOnlyGaitRepairFlatPPORunnerCfg(Go2X5DogOnlyFlatPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 1200
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_gait_repair"
+        self.algorithm.entropy_coef = 0.0015
+        self.algorithm.learning_rate = 1.0e-4
+
+
+@configclass
+class Go2X5DogOnlyPlanarTrackFlatPPORunnerCfg(Go2X5DogOnlyFlatPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 2000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_planar_track"
+        self.algorithm.entropy_coef = 0.001
+        self.algorithm.learning_rate = 5.0e-5
+
+
+@configclass
+class Go2X5DogOnlyPlanarSim2RealFlatPPORunnerCfg(Go2X5DogOnlyFlatPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 1200
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_planar_sim2real"
+        self.algorithm.entropy_coef = 0.0007
+        self.algorithm.learning_rate = 2.0e-5
+
+
+@configclass
 class Go2X5DogOnlyRoughPPORunnerCfg(Go2X5DogOnlyFlatPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
@@ -185,6 +224,21 @@ class Go2X5DogOnlyRoughStairsVxPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
         self.max_iterations = 10000
         self.save_interval = 100
         self.experiment_name = "go2_x5_dog_only_rough_stairs_vx"
+        self.algorithm.entropy_coef = 0.0015
+        self.algorithm.learning_rate = 1.0e-5
+
+
+@configclass
+class Go2X5DogOnlyMixedShortStairsPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
+    """Conservative continuation for flat tracking and fixed short stairs."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 32
+        self.max_iterations = 6000
+        self.save_interval = 100
+        self.experiment_name = "go2_x5_dog_only_mixed_short_stairs"
         self.algorithm.entropy_coef = 0.0015
         self.algorithm.learning_rate = 1.0e-5
 

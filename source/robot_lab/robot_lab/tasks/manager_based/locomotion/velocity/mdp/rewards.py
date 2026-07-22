@@ -65,6 +65,30 @@ def vx_tracking_excess_l1(
     return torch.clamp(excess_error / torch.clamp(tolerance, min=1.0e-6), max=max_penalty)
 
 
+def planar_velocity_tracking_excess_l1(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    vx_absolute_tolerance: float = 0.08,
+    vy_absolute_tolerance: float = 0.04,
+    relative_tolerance: float = 0.15,
+    max_penalty: float = 6.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize vx/vy tracking errors only outside per-axis acceptance bands."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    command_xy = env.command_manager.get_command(command_name)[:, :2]
+    velocity_xy = asset.data.root_lin_vel_b[:, :2]
+    absolute_floor = torch.tensor(
+        (vx_absolute_tolerance, vy_absolute_tolerance),
+        dtype=command_xy.dtype,
+        device=command_xy.device,
+    )
+    tolerance = torch.maximum(absolute_floor, torch.abs(command_xy) * relative_tolerance)
+    excess_error = torch.clamp(torch.abs(command_xy - velocity_xy) - tolerance, min=0.0)
+    normalized_excess = torch.sum(excess_error / torch.clamp(tolerance, min=1.0e-6), dim=1)
+    return torch.clamp(normalized_excess, max=max_penalty) * _reward_upright_scale(env)
+
+
 def uncommanded_velocity_excess_l1(
     env: ManagerBasedRLEnv,
     lateral_tolerance: float = 0.1,
@@ -615,6 +639,119 @@ def _ordered_body_ids(entity, foot_names: list[str]) -> list[int]:
             raise ValueError(f"Expected exactly one body for foot name {foot_name!r}, got {ids}.")
         body_ids.append(ids[0])
     return body_ids
+
+
+class PlanarTouchdownStrideReward(ManagerTermBase):
+    """Reward swing-foot touchdown displacement along the commanded planar direction."""
+
+    def __init__(self, cfg: RewTerm, env: ManagerBasedRLEnv):
+        super().__init__(cfg, env)
+        self.contact_sensor: ContactSensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
+        self.asset: Articulation = env.scene[cfg.params["asset_cfg"].name]
+        foot_names = list(cfg.params["foot_names"])
+        self.sensor_foot_ids = _ordered_body_ids(self.contact_sensor, foot_names)
+        self.asset_foot_ids = _ordered_body_ids(self.asset, foot_names)
+        self.foot_count = len(self.asset_foot_ids)
+        if self.foot_count != 4:
+            raise ValueError("PlanarTouchdownStrideReward expects exactly four feet.")
+
+        shape = (env.num_envs, self.foot_count)
+        self._liftoff_pos_w = torch.zeros((*shape, 2), device=env.device)
+        self._liftoff_direction_w = torch.zeros((*shape, 2), device=env.device)
+        self._liftoff_target_stride = torch.zeros(shape, device=env.device)
+        self._liftoff_active = torch.zeros(shape, dtype=torch.bool, device=env.device)
+        self._was_contact = torch.zeros(shape, dtype=torch.bool, device=env.device)
+        self._initialized = False
+
+    def reset(self, env_ids: torch.Tensor | slice | None = None):
+        if env_ids is None:
+            env_ids = slice(None)
+        self._liftoff_pos_w[env_ids] = 0.0
+        self._liftoff_direction_w[env_ids] = 0.0
+        self._liftoff_target_stride[env_ids] = 0.0
+        self._liftoff_active[env_ids] = False
+        self._was_contact[env_ids] = False
+
+    def __call__(
+        self,
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        foot_names: list[str],
+        base_stride: float,
+        speed_stride_scale: float,
+        min_stride: float,
+        max_stride: float,
+        stride_std: float,
+        short_stride_penalty_scale: float,
+        command_threshold: float,
+        contact_force_threshold: float,
+        sensor_cfg: SceneEntityCfg,
+        asset_cfg: SceneEntityCfg,
+    ) -> torch.Tensor:
+        del foot_names, sensor_cfg, asset_cfg
+        foot_xy = self.asset.data.body_pos_w[:, self.asset_foot_ids, :2]
+        contact_forces = self.contact_sensor.data.net_forces_w_history[:, :, self.sensor_foot_ids, :]
+        contact = contact_forces.norm(dim=-1).max(dim=1)[0] > contact_force_threshold
+
+        command_xy = env.command_manager.get_command(command_name)[:, :2]
+        command_speed = torch.linalg.norm(command_xy, dim=1)
+        command_direction_b = command_xy / torch.clamp(command_speed, min=1.0e-6).unsqueeze(1)
+        yaw = math_utils.euler_xyz_from_quat(self.asset.data.root_quat_w)[2]
+        cos_yaw = torch.cos(yaw)
+        sin_yaw = torch.sin(yaw)
+        command_direction_w = torch.stack(
+            (
+                cos_yaw * command_direction_b[:, 0] - sin_yaw * command_direction_b[:, 1],
+                sin_yaw * command_direction_b[:, 0] + cos_yaw * command_direction_b[:, 1],
+            ),
+            dim=1,
+        )
+        target_stride = torch.clamp(
+            base_stride + speed_stride_scale * command_speed,
+            min=min_stride,
+            max=max_stride,
+        )
+        active_command = command_speed > command_threshold
+
+        if not self._initialized:
+            self._liftoff_pos_w.copy_(foot_xy)
+            self._was_contact.copy_(contact)
+            self._initialized = True
+
+        episode_start = env.episode_length_buf <= 1
+        if torch.any(episode_start):
+            self._liftoff_pos_w[episode_start] = foot_xy[episode_start]
+            self._liftoff_active[episode_start] = False
+            self._was_contact[episode_start] = contact[episode_start]
+
+        first_air = (~contact) & self._was_contact
+        if torch.any(first_air):
+            direction_per_foot = command_direction_w.unsqueeze(1).expand(-1, self.foot_count, -1)
+            target_per_foot = target_stride.unsqueeze(1).expand(-1, self.foot_count)
+            active_per_foot = active_command.unsqueeze(1).expand(-1, self.foot_count)
+            self._liftoff_pos_w[first_air] = foot_xy[first_air]
+            self._liftoff_direction_w[first_air] = direction_per_foot[first_air]
+            self._liftoff_target_stride[first_air] = target_per_foot[first_air]
+            self._liftoff_active[first_air] = active_per_foot[first_air]
+
+        touchdown = contact & ~self._was_contact & self._liftoff_active
+        stride_vector = foot_xy - self._liftoff_pos_w
+        stride_along_command = torch.sum(stride_vector * self._liftoff_direction_w, dim=2)
+        target = self._liftoff_target_stride
+        score = torch.exp(-torch.square(stride_along_command - target) / max(stride_std**2, 1.0e-6))
+        short_penalty = short_stride_penalty_scale * torch.clamp(
+            (target - stride_along_command) / torch.clamp(target, min=1.0e-6),
+            min=0.0,
+            max=1.0,
+        )
+        touchdown_value = (score - short_penalty) * touchdown.to(score.dtype)
+        touchdown_count = touchdown.sum(dim=1)
+        reward = touchdown_value.sum(dim=1) / torch.clamp(touchdown_count, min=1)
+        reward = torch.where(touchdown_count > 0, reward, torch.zeros_like(reward))
+
+        self._liftoff_active[touchdown] = False
+        self._was_contact.copy_(contact)
+        return reward * _reward_upright_scale(env)
 
 
 class CrawlGaitReward(ManagerTermBase):

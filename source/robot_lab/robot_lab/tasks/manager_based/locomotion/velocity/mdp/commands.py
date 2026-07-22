@@ -17,6 +17,10 @@ from isaaclab.utils import configclass
 import robot_lab.tasks.manager_based.locomotion.velocity.mdp as mdp
 
 from .utils import is_env_assigned_to_terrain, is_robot_on_terrain
+from .planar_command_utils import (
+    sample_stratified_planar_commands as _sample_stratified_planar_commands,
+)
+from .planar_command_utils import validate_planar_command_spec as _validate_planar_command_spec
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -93,6 +97,54 @@ class UniformThresholdVelocityCommandCfg(mdp.UniformVelocityCommandCfg):
     """Configuration for the uniform threshold velocity command generator."""
 
     class_type: type = UniformThresholdVelocityCommand
+
+
+class StratifiedPlanarVelocityCommand(mdp.UniformVelocityCommand):
+    """Sample exact planar velocity bins without applying a low-speed dead zone."""
+
+    cfg: "StratifiedPlanarVelocityCommandCfg"
+
+    def __init__(self, cfg: "StratifiedPlanarVelocityCommandCfg", env: ManagerBasedEnv):
+        probabilities = (
+            cfg.standing_probability,
+            cfg.pure_vx_probability,
+            cfg.pure_vy_probability,
+            cfg.combined_probability,
+        )
+        _validate_planar_command_spec(cfg.vx_values, cfg.vy_values, probabilities)
+
+        super().__init__(cfg, env)
+        self.vx_values = torch.tensor(cfg.vx_values, dtype=torch.float32, device=self.device)
+        self.vy_values = torch.tensor(cfg.vy_values, dtype=torch.float32, device=self.device)
+        self.category_cdf = torch.tensor(probabilities, dtype=torch.float32, device=self.device).cumsum(dim=0)
+
+    def _resample_command(self, env_ids: Sequence[int]):
+        if len(env_ids) == 0:
+            return
+
+        env_ids_tensor = torch.as_tensor(env_ids, dtype=torch.long, device=self.device)
+        commands, standing = _sample_stratified_planar_commands(
+            len(env_ids_tensor),
+            self.vx_values,
+            self.vy_values,
+            self.category_cdf,
+        )
+        self.vel_command_b[env_ids_tensor] = commands
+        self.is_heading_env[env_ids_tensor] = False
+        self.is_standing_env[env_ids_tensor] = standing
+
+
+@configclass
+class StratifiedPlanarVelocityCommandCfg(mdp.UniformVelocityCommandCfg):
+    """Configuration for :class:`StratifiedPlanarVelocityCommand`."""
+
+    class_type: type = StratifiedPlanarVelocityCommand
+    vx_values: tuple[float, ...] = (-0.7, -0.5, -0.3, -0.15, 0.15, 0.3, 0.5, 0.7)
+    vy_values: tuple[float, ...] = (-0.2, -0.15, -0.1, -0.05, 0.05, 0.1, 0.15, 0.2)
+    standing_probability: float = 0.10
+    pure_vx_probability: float = 0.35
+    pure_vy_probability: float = 0.30
+    combined_probability: float = 0.25
 
 
 class StratifiedVxVelocityCommand(mdp.UniformVelocityCommand):

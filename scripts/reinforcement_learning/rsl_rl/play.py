@@ -47,6 +47,14 @@ parser.add_argument(
     help="For rough-terrain play, keep only low-difficulty terrain types and shrink the terrain grid.",
 )
 parser.add_argument(
+    "--flat_zero_height_scan",
+    action="store_true",
+    default=False,
+    help=(
+        "Replay the DogOnly RoughStairsVx contract on a plane with its 187-D policy/critic height scan set to zero."
+    ),
+)
+parser.add_argument(
     "--base_cmd",
     type=float,
     nargs=3,
@@ -213,6 +221,14 @@ import robot_lab.tasks  # noqa: F401
 import robot_lab.tasks.manager_based.locomotion.velocity.mdp as locomotion_mdp
 
 
+FLAT_ZERO_SCAN_TASK_ID = "RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyRoughStairsVx-v0"
+DOG_ONLY_POLICY_OBS_DIM = 260
+DOG_ONLY_ACTION_DIM = 12
+DOG_ONLY_HEIGHT_SCAN_DIM = 187
+DOG_ONLY_HEIGHT_SCAN_START = 66
+DOG_ONLY_HEIGHT_SCAN_STOP = DOG_ONLY_HEIGHT_SCAN_START + DOG_ONLY_HEIGHT_SCAN_DIM
+
+
 def _normalize_search_tokens(value: str) -> list[str]:
     return [token for token in re.sub(r"[^a-z0-9]+", "_", value.lower()).split("_") if token]
 
@@ -363,6 +379,126 @@ def _format_debug_tensor(values: torch.Tensor | None, limit: int = 6) -> str:
     if len(flat_values) > limit:
         rendered += ", ..."
     return f"[{rendered}]"
+
+
+def _zero_height_scan_187(env):
+    """Return a cached all-zero scan with the checkpoint's original 187-D shape."""
+    buffer = getattr(env, "_go2_x5_play_height_scan_zeros", None)
+    if buffer is None or buffer.shape != (env.num_envs, DOG_ONLY_HEIGHT_SCAN_DIM):
+        buffer = torch.zeros((env.num_envs, DOG_ONLY_HEIGHT_SCAN_DIM), device=env.device)
+        env._go2_x5_play_height_scan_zeros = buffer
+    return buffer
+
+
+def _configure_flat_zero_height_scan(
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, task_name: str
+):
+    """Apply the plane/zero-scan ablation without changing the RoughStairsVx robot or control contract."""
+    if task_name != FLAT_ZERO_SCAN_TASK_ID:
+        raise ValueError(
+            "--flat_zero_height_scan is restricted to the checkpoint-matched task "
+            f"'{FLAT_ZERO_SCAN_TASK_ID}', got '{task_name}'."
+        )
+
+    terrain = getattr(env_cfg.scene, "terrain", None)
+    if terrain is None:
+        raise RuntimeError("--flat_zero_height_scan requires a terrain configuration.")
+    terrain.terrain_type = "plane"
+    terrain.terrain_generator = None
+    terrain.max_init_terrain_level = None
+
+    curriculum = getattr(env_cfg, "curriculum", None)
+    if curriculum is not None:
+        curriculum.terrain_levels = None
+
+    for group_name in ("policy", "critic"):
+        observation_group = getattr(getattr(env_cfg, "observations", None), group_name, None)
+        height_scan = getattr(observation_group, "height_scan", None)
+        if height_scan is None:
+            raise RuntimeError(
+                f"--flat_zero_height_scan requires an active observations.{group_name}.height_scan term."
+            )
+        height_scan.func = _zero_height_scan_187
+        height_scan.params = {}
+        height_scan.noise = None
+
+    root_init_z = float(env_cfg.scene.robot.init_state.pos[2])
+    print(
+        "[INFO] Flat-zero-scan override configured: "
+        f"task={task_name}, terrain={terrain.terrain_type}, root_init_z={root_init_z:.3f}, "
+        f"height_scan_dim={DOG_ONLY_HEIGHT_SCAN_DIM}"
+    )
+
+
+def _observation_term_slice(observation_manager, group_name: str, term_name: str) -> tuple[int, int]:
+    term_names = observation_manager.active_terms.get(group_name)
+    term_dims = observation_manager.group_obs_term_dim.get(group_name)
+    if term_names is None or term_dims is None or term_name not in term_names:
+        raise RuntimeError(f"Observation term '{group_name}.{term_name}' is not active.")
+    if len(term_names) != len(term_dims) or any(len(dim) != 1 for dim in term_dims):
+        raise RuntimeError(f"Observation group '{group_name}' no longer has a flat, term-aligned layout.")
+
+    term_index = term_names.index(term_name)
+    start = sum(dim[0] for dim in term_dims[:term_index])
+    return start, start + term_dims[term_index][0]
+
+
+def _validate_flat_zero_height_scan_contract(env, obs, policy):
+    """Fail closed if the runtime observation/action contract differs from model_36249."""
+    observation_manager = getattr(env.unwrapped, "observation_manager", None)
+    if observation_manager is None:
+        raise RuntimeError("--flat_zero_height_scan requires a manager-based observation layout.")
+
+    policy_obs = obs["policy"]
+    if policy_obs.ndim != 2 or policy_obs.shape[1] != DOG_ONLY_POLICY_OBS_DIM:
+        raise RuntimeError(
+            f"Expected policy observations shaped (N, {DOG_ONLY_POLICY_OBS_DIM}), got {tuple(policy_obs.shape)}."
+        )
+    if not torch.isfinite(policy_obs).all():
+        raise RuntimeError("Policy observations contain NaN or Inf before flat-zero-scan playback.")
+
+    policy_scan_start, policy_scan_stop = _observation_term_slice(observation_manager, "policy", "height_scan")
+    if (policy_scan_start, policy_scan_stop) != (DOG_ONLY_HEIGHT_SCAN_START, DOG_ONLY_HEIGHT_SCAN_STOP):
+        raise RuntimeError(
+            "The policy height-scan slice changed: expected "
+            f"[{DOG_ONLY_HEIGHT_SCAN_START}:{DOG_ONLY_HEIGHT_SCAN_STOP}], "
+            f"got [{policy_scan_start}:{policy_scan_stop}]."
+        )
+    policy_scan = policy_obs[:, policy_scan_start:policy_scan_stop]
+    if policy_scan.shape[1] != DOG_ONLY_HEIGHT_SCAN_DIM:
+        raise RuntimeError(f"Expected a {DOG_ONLY_HEIGHT_SCAN_DIM}-D policy height scan, got {policy_scan.shape[1]}.")
+    policy_scan_max_abs = float(policy_scan.abs().max().item())
+    if policy_scan_max_abs != 0.0:
+        raise RuntimeError(f"Policy height scan is not exactly zero (max_abs={policy_scan_max_abs:.6e}).")
+
+    critic_scan_max_abs = None
+    if "critic" in obs.keys():
+        critic_scan_start, critic_scan_stop = _observation_term_slice(observation_manager, "critic", "height_scan")
+        critic_scan = obs["critic"][:, critic_scan_start:critic_scan_stop]
+        if critic_scan.shape[1] != DOG_ONLY_HEIGHT_SCAN_DIM:
+            raise RuntimeError(f"Expected a {DOG_ONLY_HEIGHT_SCAN_DIM}-D critic height scan, got {critic_scan.shape[1]}.")
+        critic_scan_max_abs = float(critic_scan.abs().max().item())
+        if critic_scan_max_abs != 0.0:
+            raise RuntimeError(f"Critic height scan is not exactly zero (max_abs={critic_scan_max_abs:.6e}).")
+
+    with torch.inference_mode():
+        actions = policy(obs)
+    if actions.ndim != 2 or actions.shape[1] != DOG_ONLY_ACTION_DIM:
+        raise RuntimeError(f"Expected policy actions shaped (N, {DOG_ONLY_ACTION_DIM}), got {tuple(actions.shape)}.")
+    if not torch.isfinite(actions).all():
+        raise RuntimeError("Policy produced NaN or Inf during flat-zero-scan contract validation.")
+
+    root_init_z = float(env.unwrapped.cfg.scene.robot.init_state.pos[2])
+    reset_root_z = float(env.unwrapped.scene["robot"].data.root_pos_w[0, 2].item())
+    critic_scan_text = "n/a" if critic_scan_max_abs is None else f"{critic_scan_max_abs:.1e}"
+    print(
+        "[INFO] Flat-zero-scan contract verified: "
+        f"task={FLAT_ZERO_SCAN_TASK_ID}, terrain={env.unwrapped.cfg.scene.terrain.terrain_type}, "
+        f"root_init_z={root_init_z:.3f}, reset_root_z={reset_root_z:.3f}, "
+        f"policy_obs={tuple(policy_obs.shape)}, actions={tuple(actions.shape)}, "
+        f"policy_height_scan=[{policy_scan_start}:{policy_scan_stop}], "
+        f"policy_scan_max_abs={policy_scan_max_abs:.1e}, critic_scan_max_abs={critic_scan_text}"
+    )
 
 
 def _print_play_debug_summary(
@@ -809,6 +945,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         _disable_play_randomization(env_cfg, preserve_sim2sim=logged_env_cfg is not None)
     if args_cli.easy_terrain_only:
         _restrict_to_easy_terrains(env_cfg)
+    if args_cli.flat_zero_height_scan:
+        _configure_flat_zero_height_scan(env_cfg, args_cli.task)
     # avoid early episode termination during play/recording
     if getattr(env_cfg, "terminations", None) is not None:
         env_cfg.terminations.terrain_out_of_bounds = None
@@ -1007,6 +1145,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # reset environment
     obs = env.get_observations()
+    if args_cli.flat_zero_height_scan:
+        _validate_flat_zero_height_scan_contract(env, obs, policy)
     timestep = 0
     arm_term = None
     arm_pose = None

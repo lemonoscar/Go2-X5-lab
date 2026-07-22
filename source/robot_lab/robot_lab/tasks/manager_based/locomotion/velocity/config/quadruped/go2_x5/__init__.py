@@ -135,6 +135,42 @@ gym.register(
 )
 
 gym.register(
+    id="RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyGaitRepair-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.train_route_env_cfg:Go2X5DogOnlyGaitRepairFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyGaitRepairFlatPPORunnerCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyPlanarTrack-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.train_route_env_cfg:Go2X5DogOnlyPlanarTrackFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyPlanarTrackFlatPPORunnerCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyPlanarSim2Real-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.train_route_env_cfg:Go2X5DogOnlyPlanarSim2RealFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyPlanarSim2RealFlatPPORunnerCfg"
+        ),
+    },
+)
+
+gym.register(
     id="RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnly-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
@@ -176,6 +212,20 @@ gym.register(
         ),
         "rsl_rl_cfg_entry_point": (
             f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyRoughStairsVxPPORunnerCfg"
+        ),
+    },
+)
+
+gym.register(
+    id="RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyMixedShortStairs-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.mixed_short_stairs_env_cfg:Go2X5DogOnlyMixedShortStairsEnvCfg"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_ppo_cfg:Go2X5DogOnlyMixedShortStairsPPORunnerCfg"
         ),
     },
 )

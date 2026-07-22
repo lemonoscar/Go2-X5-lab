@@ -4,6 +4,7 @@
 import torch
 
 import isaaclab.terrains as terrain_gen
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
@@ -1456,6 +1457,234 @@ class Go2X5DogOnlyCrawlFlatEnvCfg(Go2X5DogOnlyRecoverFlatEnvCfg):
         self.sim2sim_obs_delay_steps = 0
 
         self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5DogOnlyGaitRepairFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
+    """Stage 1: repair swing clearance and stride with the selected leg controller."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # User-selected leg controller for all three specialization stages.
+        self.actions.joint_pos.scale = {
+            ".*_hip_joint": 0.125,
+            ".*_thigh_joint": 0.25,
+            ".*_calf_joint": 0.25,
+        }
+        self.scene.robot.actuators["legs_hip_thigh"].stiffness = 40.0
+        self.scene.robot.actuators["legs_hip_thigh"].damping = 1.0
+        self.scene.robot.actuators["legs_calf"].stiffness = 40.0
+        self.scene.robot.actuators["legs_calf"].damping = 1.0
+
+        self.commands.base_velocity = mdp.StratifiedPlanarVelocityCommandCfg(
+            asset_name="robot",
+            resampling_time_range=(5.0, 5.0),
+            rel_standing_envs=0.0,
+            rel_heading_envs=0.0,
+            heading_command=False,
+            debug_vis=False,
+            vx_values=(-0.7, -0.5, -0.3, 0.3, 0.5, 0.7),
+            vy_values=(-0.2, -0.1, 0.1, 0.2),
+            standing_probability=0.08,
+            pure_vx_probability=0.55,
+            pure_vy_probability=0.22,
+            combined_probability=0.15,
+            ranges=mdp.StratifiedPlanarVelocityCommandCfg.Ranges(
+                lin_vel_x=(-0.7, 0.7),
+                lin_vel_y=(-0.2, 0.2),
+                ang_vel_z=(0.0, 0.0),
+                heading=None,
+            ),
+        )
+        self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE
+        self.curriculum.command_levels_lin_vel = None
+        self.curriculum.command_levels_ang_vel = None
+
+        if self.rewards.feet_height_body is None:
+            self.rewards.feet_height_body = RewTerm(
+                func=mdp.feet_height_body,
+                weight=0.0,
+                params={
+                    "asset_cfg": SceneEntityCfg("robot", body_names=[self.foot_link_name]),
+                    "tanh_mult": 1.5,
+                    "target_height": -0.16,
+                    "command_name": "base_velocity",
+                },
+            )
+
+        foot_names = ["FR_foot", "FL_foot", "RR_foot", "RL_foot"]
+        self.rewards.planar_touchdown_stride = RewTerm(
+            func=mdp.PlanarTouchdownStrideReward,
+            weight=0.35,
+            params={
+                "command_name": "base_velocity",
+                "foot_names": foot_names,
+                "base_stride": 0.10,
+                "speed_stride_scale": 0.16,
+                "min_stride": 0.12,
+                "max_stride": 0.22,
+                "stride_std": 0.07,
+                "short_stride_penalty_scale": 0.35,
+                "command_threshold": 0.05,
+                "contact_force_threshold": 1.0,
+                "asset_cfg": SceneEntityCfg("robot"),
+                "sensor_cfg": SceneEntityCfg("contact_forces"),
+            },
+        )
+        self.rewards.planar_tracking_excess = RewTerm(
+            func=mdp.planar_velocity_tracking_excess_l1,
+            weight=-0.40,
+            params={
+                "command_name": "base_velocity",
+                "vx_absolute_tolerance": 0.08,
+                "vy_absolute_tolerance": 0.04,
+                "relative_tolerance": 0.15,
+                "max_penalty": 6.0,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+
+        gait_repair_weights = {
+            "track_lin_vel_xy_exp": 5.0,
+            "track_ang_vel_z_exp": 1.5,
+            "feet_air_time": 0.90,
+            "feet_slide": -0.12,
+            "feet_drag": -0.05,
+            "feet_height_body": -0.60,
+            "feet_gait": 0.25,
+            "joint_pos_penalty": -0.22,
+            "action_rate_l2": -0.01,
+        }
+        for attr_name, weight in gait_repair_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+
+        self.rewards.track_lin_vel_xy_exp.params["std"] = 0.25
+        self.rewards.track_ang_vel_z_exp.params["std"] = 0.20
+        self.rewards.feet_air_time.params["threshold"] = 0.38
+        self.rewards.feet_drag.params["penalty_feet_drag_height"] = 0.14
+        self.rewards.feet_drag.params["feet_drag_sigma"] = 0.04
+        self.rewards.feet_gait.params["command_threshold"] = 0.05
+        self.rewards.feet_gait.params["velocity_threshold"] = 0.15
+        self.rewards.feet_gait.params["max_err"] = 0.15
+        self.rewards.joint_pos_penalty.params["command_threshold"] = 0.05
+        self.rewards.joint_pos_penalty.params["velocity_threshold"] = 0.20
+
+        # Keep the first two stages close to nominal so the policy learns motion, not caution.
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.80, 1.05)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.70, 0.95)
+        self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.05)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.98, 1.02)
+        self.events.randomize_rigid_body_mass_base.params["operation"] = "scale"
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.99, 1.01)
+        self.events.randomize_com_positions.params["com_range"] = {
+            "x": (-0.005, 0.005),
+            "y": (-0.005, 0.005),
+            "z": (-0.005, 0.005),
+        }
+        self.events.randomize_actuator_gains.mode = "reset"
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.98, 1.02)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.98, 1.02)
+        self.events.randomize_actuator_gains.params["distribution"] = "uniform"
+        self.events.randomize_apply_external_force_torque = None
+        self.events.randomize_push_robot = None
+        self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.01, n_max=0.01)
+        self.observations.policy.projected_gravity.noise = Unoise(n_min=-0.015, n_max=0.015)
+        self.sim2sim_action_delay_range = (1, 1)
+        self.sim2sim_action_hold_prob = 0.01
+        self.sim2sim_action_noise_std = 0.0
+        self.sim2sim_obs_delay_steps = 0
+
+        self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5DogOnlyPlanarTrackFlatEnvCfg(Go2X5DogOnlyGaitRepairFlatEnvCfg):
+    """Stage 2: track the complete requested vx/vy envelope while retaining gait quality."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.commands.base_velocity.vx_values = (-0.7, -0.5, -0.3, -0.15, 0.15, 0.3, 0.5, 0.7)
+        self.commands.base_velocity.vy_values = (-0.2, -0.15, -0.1, -0.05, 0.05, 0.1, 0.15, 0.2)
+        self.commands.base_velocity.standing_probability = 0.10
+        self.commands.base_velocity.pure_vx_probability = 0.35
+        self.commands.base_velocity.pure_vy_probability = 0.30
+        self.commands.base_velocity.combined_probability = 0.25
+
+        self.rewards.command_direction_progress = RewTerm(
+            func=mdp.command_direction_progress,
+            weight=0.50,
+            params={
+                "command_name": "base_velocity",
+                "command_threshold": 0.05,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.commanded_stall = RewTerm(
+            func=mdp.commanded_stall_penalty,
+            weight=-0.80,
+            params={
+                "command_name": "base_velocity",
+                "command_threshold": 0.05,
+                "min_progress_speed": 0.08,
+                "max_penalty": 2.0,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+
+        planar_track_weights = {
+            "track_lin_vel_xy_exp": 6.0,
+            "track_ang_vel_z_exp": 2.0,
+            "feet_air_time": 0.55,
+            "feet_slide": -0.08,
+            "feet_drag": -0.04,
+            "feet_height_body": -0.35,
+            "feet_gait": 0.16,
+            "planar_touchdown_stride": 0.18,
+            "planar_tracking_excess": -1.20,
+        }
+        for attr_name, weight in planar_track_weights.items():
+            reward_term = getattr(self.rewards, attr_name, None)
+            if reward_term is not None:
+                reward_term.weight = weight
+        self.rewards.track_lin_vel_xy_exp.params["std"] = 0.20
+        self.disable_zero_weight_rewards()
+
+
+@configclass
+class Go2X5DogOnlyPlanarSim2RealFlatEnvCfg(Go2X5DogOnlyPlanarTrackFlatEnvCfg):
+    """Stage 3: add bounded dynamics, timing, sensor, and push robustness."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.events.randomize_rigid_body_material.params["static_friction_range"] = (0.65, 1.10)
+        self.events.randomize_rigid_body_material.params["dynamic_friction_range"] = (0.55, 1.00)
+        self.events.randomize_rigid_body_material.params["restitution_range"] = (0.0, 0.10)
+        self.events.randomize_rigid_body_mass_base.params["mass_distribution_params"] = (0.95, 1.05)
+        self.events.randomize_rigid_body_mass_others.params["mass_distribution_params"] = (0.98, 1.03)
+        self.events.randomize_com_positions.params["com_range"] = {
+            "x": (-0.01, 0.01),
+            "y": (-0.01, 0.01),
+            "z": (-0.01, 0.01),
+        }
+        self.events.randomize_actuator_gains.params["stiffness_distribution_params"] = (0.90, 1.10)
+        self.events.randomize_actuator_gains.params["damping_distribution_params"] = (0.90, 1.10)
+        self.events.randomize_push_robot = EventTerm(
+            func=mdp.push_by_setting_velocity,
+            mode="interval",
+            interval_range_s=(12.0, 18.0),
+            params={"velocity_range": {"x": (-0.10, 0.10), "y": (-0.10, 0.10)}},
+        )
+        self.observations.policy.base_ang_vel.noise = Unoise(n_min=-0.03, n_max=0.03)
+        self.observations.policy.projected_gravity.noise = Unoise(n_min=-0.03, n_max=0.03)
+        self.sim2sim_action_delay_range = (1, 2)
+        self.sim2sim_action_hold_prob = 0.03
+        self.sim2sim_action_noise_std = 0.002
+        self.sim2sim_obs_delay_steps = 0
 
 
 @configclass

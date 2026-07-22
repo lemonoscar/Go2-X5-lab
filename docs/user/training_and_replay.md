@@ -580,6 +580,236 @@ env PYTHONDONTWRITEBYTECODE=1 \
 The evaluator requires both mean vx error and vx RMSE to remain within `max(0.1 m/s, 10% * vx_cmd)`, with
 `|mean vy| <= 0.1 m/s`, `|mean wz| <= 0.1 rad/s`, and no reset.
 
+## model_36249 RoughStairsVx Flat Zero-Scan Replay
+
+To visualize `model_36249.pt` on a plane without silently changing its robot/control contract, keep the checkpoint-matched
+RoughStairsVx task and add `--flat_zero_height_scan`:
+
+```bash
+env PYTHONDONTWRITEBYTECODE=1 \
+  MPLCONFIGDIR=/tmp/go2x5-model36249-flat-zero-scan-matplotlib \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/play.py \
+  --task RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyRoughStairsVx-v0 \
+  --checkpoint logs/rsl_rl/go2_x5_dog_only_rough_stairs_vx/lab_server_2026-07-19_curriculum10k_v4_final/model_36249.pt \
+  --num_envs 1 \
+  --base_cmd 0.5 0 0 \
+  --flat_zero_height_scan \
+  --deterministic_playback \
+  --real-time \
+  --debug_interval 50 \
+  --seed 0 \
+  --device cuda:0
+```
+
+The flag is intentionally restricted to `RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyRoughStairsVx-v0`. It changes only that
+task's terrain to `plane`, disables the now-inapplicable terrain curriculum, and replaces the policy/critic `height_scan` terms
+with exact `(num_envs, 187)` zero tensors. The task's `0.30 m` root pose, checkpoint-era default joints/action offset, action
+scale, PD gains, commands, rewards, and `260 -> 12` network contract remain those of RoughStairsVx. Do not substitute
+`RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnly-v0`: that separate task uses the newer `0.28 m` crouch contract and different joint
+defaults.
+
+Before stepping, replay fails closed unless the policy observation is 260-D, the action is 12-D, and the term metadata resolves
+the 187-D scan to `policy_obs[66:253]` with exact zero maximum absolute value. The console also prints configured/reset root
+height so a cross-task replay is immediately visible. This is a zero-scan ablation on a plane, not evidence that the checkpoint
+retains live-scan rough-terrain capability.
+
+## model_19750 Flat Planar Specialization
+
+The three new tasks form a strict sequence. They retain the `260 -> 12` network, fixed arm, zero scan, and `0.28 m` crouch pose,
+but intentionally use the selected leg settings: `Kp=40`, `Kd=1`, and hip/thigh/calf action scale
+`0.125/0.25/0.25`. Because this changes controller semantics relative to the source Flat task, run the one-update smoke before
+starting Stage 1.
+
+Stage 1 smoke from the immutable source checkpoint:
+
+```bash
+env PYTHONDONTWRITEBYTECODE=1 \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyGaitRepair-v0 \
+  --num_envs 64 \
+  --max_iterations 1 \
+  --resume \
+  --checkpoint logs/rsl_rl/go2_x5_dog_only_flat/2026-05-31_20-42-11/model_19750.pt \
+  --no_load_optimizer \
+  --run_name smoke_from19750_kp40_kd1 \
+  --seed 0 \
+  --device cuda:0 \
+  --headless
+```
+
+Start production P1 from the original `model_19750.pt` with `--max_iterations 100`, inspect that first saved checkpoint, and
+continue in monitored blocks only if survival and contact rates improve. The stage ceiling is 1200 total added updates. Select
+the best Stage-1 checkpoint by survival, visible foot clearance/no drag, and non-regressing planar tracking; do not automatically
+use the last checkpoint or the one-update smoke checkpoint.
+
+Stage 2 starts from that accepted Stage-1 checkpoint with a fresh optimizer:
+
+```bash
+env PYTHONDONTWRITEBYTECODE=1 \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyPlanarTrack-v0 \
+  --num_envs 2048 \
+  --max_iterations 2000 \
+  --resume \
+  --checkpoint <ACCEPTED_GAIT_REPAIR_CHECKPOINT> \
+  --no_load_optimizer \
+  --run_name planar_track_from_gait_repair \
+  --seed 0 \
+  --device cuda:0 \
+  --headless
+```
+
+Stage 3 starts only after the Stage-2 planar gate passes:
+
+```bash
+env PYTHONDONTWRITEBYTECODE=1 \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyPlanarSim2Real-v0 \
+  --num_envs 2048 \
+  --max_iterations 1200 \
+  --resume \
+  --checkpoint <ACCEPTED_PLANAR_TRACK_CHECKPOINT> \
+  --no_load_optimizer \
+  --run_name planar_sim2real_from_planar_track \
+  --seed 0 \
+  --device cuda:0 \
+  --headless
+```
+
+Run the deterministic planar matrix against a Stage-2 or Stage-3 candidate with its matching task:
+
+```bash
+env PYTHONDONTWRITEBYTECODE=1 \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/evaluate_flat_velocity_stability.py \
+  --task RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnlyPlanarTrack-v0 \
+  --checkpoint <CHECKPOINT> \
+  --output-dir <OUTPUT_DIR> \
+  --profile planar \
+  --repeats 3 \
+  --seed 0 \
+  --device cuda:0 \
+  --headless
+```
+
+Use the Sim2Real task ID when evaluating a Stage-3 checkpoint so the selected `PD/scale` contract matches; the evaluator itself
+turns off randomization to make candidates comparable. The complete bins, rewards, randomization ranges, runner settings, and
+stage gates are recorded in `docs/train/dogonly_ppo_flat_specialization.md`.
+
+## DogOnly Flat Three-Axis Velocity Stability Benchmark
+
+Use the independent flat benchmark for a checkpoint trained with
+`RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnly-v0`. This is the preferred general flat task because it uses a plane,
+keeps the arm fixed, preserves the current `260 -> 12` DogOnly contract, and supports the full body-frame
+`vx/vy/wz` command space. Foundation checkpoints still have an 18-D action head, while DogOnlyRecover and
+DogOnlyCrawl use specialized command ranges and control settings; do not evaluate those checkpoints under this task.
+
+Run the quick profile first:
+
+```bash
+env PYTHONDONTWRITEBYTECODE=1 \
+  MPLCONFIGDIR=/tmp/go2x5-flat-stability-matplotlib \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/evaluate_flat_velocity_stability.py \
+  --task RobotLab-Isaac-Velocity-Flat-Go2-X5-DogOnly-v0 \
+  --checkpoint logs/rsl_rl/go2_x5_dog_only_flat/2026-05-31_20-42-11/model_19750.pt \
+  --output-dir outputs/flat_velocity_stability/model_19750_quick \
+  --profile quick \
+  --repeats 1 \
+  --seed 0 \
+  --device cuda:0 \
+  --headless
+```
+
+The quick profile runs seven forward/lateral/yaw/mixed commands and a zero-command stop after each command. Use
+`--profile full --repeats 3` for a formal repeated three-axis matrix, or `--profile planar --repeats 3` for the new
+`vx/vy` envelope with `wz=0`. Omit `--headless` and add `--real-time` for visual inspection.
+The default 50-step policy-action warmup smoothly transfers the initial joint targets and prevents a startup-only
+contact spike; override it with `--policy-action-warmup-steps` only when comparing a deliberately different takeover protocol.
+
+The evaluator creates:
+
+- `samples.jsonl`: every control-step command, measured body velocity, base pose/attitude, action magnitude, and reset flag.
+- `segment_metrics.csv`: steady-state and transient metrics for every command and stop segment.
+- `summary.json`: checkpoint hash, exact schedule, thresholds, aggregate pass result, and per-segment metrics.
+- `report.md`: readable command/stop comparison and the deterministic-test scope boundary.
+- `velocity_tracking.png`: commanded and measured `vx/vy/wz` traces when matplotlib is available.
+
+Each segment uses its final 50% as the steady window. Non-zero command axes require gain in `[0.70, 1.30]` and
+`RMSE <= max(axis_absolute_floor, 30% * |command|)`. Zero-command axes, stop residuals, maximum roll/pitch,
+base-height variation, and reset are separate gates. All thresholds are exposed as CLI arguments; run `--help` to inspect
+them before comparing checkpoints.
+
+This benchmark disables observation corruption, domain randomization, external pushes, and simulated delay to isolate the
+flat policy/controller command response. It does not replace randomized robustness, complex-terrain, or real-robot tests.
+The existing `evaluate_vx_tracking.py` remains the separate eight-speed regression gate for Rough/Stairs checkpoints.
+
+## Mixed Flat And 10 cm Short-Stair Training
+
+Use the isolated MixedShortStairs task for the new flat/short-stair behavior. It keeps the R1-compatible `260 -> 12` DogOnly
+contract and live 187-point height scan. Terrain allocation is `60%` flat, `20%` flat-then-ascent, and `20%`
+elevated-flat-then-descent. Stair geometry is fixed at `0.10 m` rise, `0.25 m` tread, and two steps initially; successful route
+progress can promote an environment to three steps.
+
+Flat sampling explicitly covers `vx=+-0.10..0.40 m/s`, `vy=+-0.10..0.20 m/s`, zero standing, and relative left/right
+45-degree turns. Stair commands contain forward `vx` only: `0.18/0.22/0.25 m/s` upward and `0.12/0.16/0.20 m/s`
+downward. The arm is command-locked to its default pose for every moving/turning/stair sample and receives only small targets in a
+subset of flat zero-command samples.
+
+Before production training, repeat the one-update compatibility smoke from the selected R1 checkpoint:
+
+```bash
+env CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=2 \
+  PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyMixedShortStairs-v0 \
+  --num_envs 64 \
+  --max_iterations 1 \
+  --seed 0 \
+  --resume \
+  --checkpoint logs/rsl_rl/r1_best_regular_ascent_37500/model_37500.pt \
+  --no_load_optimizer \
+  --run_name mixed_short_stairs_from_r1_37500_smoke \
+  --logger tensorboard \
+  --device cuda:0 \
+  --headless
+```
+
+`CUDA_VISIBLE_DEVICES=2` exposes only physical GPU 3; Isaac therefore correctly uses `--device cuda:0`. Replace the physical
+index only when intentionally selecting a different card. The verified source SHA-256 is
+`abf4404d717e19436479f467fa1f39dad8a9f29e7d3624897861d0cc360beb3b`.
+
+After inspecting the smoke, a production continuation uses a fresh optimizer and the runner's 6000-update ceiling:
+
+```bash
+env CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=2 \
+  PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+/home/lemon/miniconda3/envs/env_isaaclab/bin/python -B \
+  scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Rough-Go2-X5-DogOnlyMixedShortStairs-v0 \
+  --num_envs 1024 \
+  --max_iterations 6000 \
+  --seed 0 \
+  --resume \
+  --checkpoint logs/rsl_rl/r1_best_regular_ascent_37500/model_37500.pt \
+  --no_load_optimizer \
+  --run_name mixed_short_stairs_from_r1_37500_long6000 \
+  --logger tensorboard \
+  --device cuda:0 \
+  --headless
+```
+
+Checkpoints are written every 100 updates under
+`logs/rsl_rl/go2_x5_dog_only_mixed_short_stairs/<run>/`. Do not select the last checkpoint from reward alone: require flat
+tracking, zero/arm-motion stability, both turn directions, and two-/three-step ascent/descent gates recorded in
+`docs/train/dogonly_ppo_mixed_short_stairs.md`. The task implementation has passed one-update smoke, but this command has not been
+started and there is no accepted production checkpoint yet.
+
 ## Standard Replay
 
 ```bash
