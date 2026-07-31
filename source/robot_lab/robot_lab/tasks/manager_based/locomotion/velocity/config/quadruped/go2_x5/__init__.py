@@ -21,6 +21,18 @@ gym.register(
 )
 
 gym.register(
+    id="RobotLab-Isaac-Velocity-Flat-Go2-X5-WTW-PD40-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.wtw_flat_env_cfg:Go2X5WTWFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.wtw_rsl_rl:Go2X5WtwPD40PPORunnerCfg"
+        ),
+    },
+)
+
+gym.register(
     id="RobotLab-Isaac-Velocity-Rough-Go2-X5-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
