@@ -11,7 +11,11 @@ from isaaclab.utils import configclass
 
 import robot_lab.tasks.manager_based.locomotion.velocity.mdp as mdp
 
-from .train_route_env_cfg import ARM_LOCKED_DEFAULT_RANGE, Go2X5DogOnlyFlatEnvCfg
+from .train_route_env_cfg import (
+    ARM_LOCKED_DEFAULT_RANGE,
+    FLAT_FOUNDATION_TERRAIN_CFG,
+    Go2X5DogOnlyFlatEnvCfg,
+)
 
 
 @configclass
@@ -59,10 +63,16 @@ class Go2X5WTWFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
             actuator.stiffness = 40.0
             actuator.damping = 1.0
 
-        # Plane and source WTW default pose. The arm remains the real, fixed payload.
-        self.scene.terrain.terrain_type = "plane"
-        self.scene.terrain.terrain_generator = None
+        # Generate the flat collision mesh locally. Isaac Lab's built-in "plane"
+        # type fetches its USD from NVIDIA S3, which makes headless training depend
+        # on external asset availability despite the terrain being featureless.
+        self.scene.terrain.terrain_type = "generator"
+        self.scene.terrain.terrain_generator = FLAT_FOUNDATION_TERRAIN_CFG.copy()
         self.scene.terrain.use_terrain_origins = False
+        self.scene.terrain.visual_material = None
+        self.scene.sky_light.spawn.texture_file = None
+
+        # Source WTW default pose. The arm remains the real, fixed payload.
         joint_pos = dict(self.scene.robot.init_state.joint_pos)
         joint_pos.update(dict(zip(mdp.WTW_JOINT_NAMES, mdp.WTW_DEFAULT_JOINT_POS, strict=True)))
         joint_pos.update(
@@ -221,6 +231,14 @@ class Go2X5WTWFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
             raise ValueError("WTW evaluator requires the full-body contact sensor.")
         if self.scene.contact_forces.history_length != self.decimation:
             raise ValueError("WTW contact history must cover one complete policy interval.")
+        if self.scene.terrain.terrain_type != "generator" or self.scene.terrain.terrain_generator is None:
+            raise ValueError("WTW flat terrain must be generated locally without a remote plane USD.")
+        if self.scene.terrain.use_terrain_origins is not False:
+            raise ValueError("WTW flat terrain must place environments on the scene grid.")
+        if self.scene.terrain.visual_material is not None:
+            raise ValueError("WTW flat terrain must not require a remote visual material.")
+        if self.scene.sky_light.spawn.texture_file is not None:
+            raise ValueError("WTW headless training must not require a remote sky texture.")
         for actuator_name in ("legs_hip_thigh", "legs_calf"):
             actuator = self.scene.robot.actuators[actuator_name]
             if actuator.stiffness != 40.0 or actuator.damping != 1.0:

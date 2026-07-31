@@ -282,6 +282,12 @@ def test_wtw_task_static_contract_and_registration_are_isolated() -> None:
     assert "self.actions.joint_pos.joint_names = list(mdp.WTW_JOINT_NAMES)" in cfg_source
     assert "self.scene.contact_forces.history_length = self.decimation" in cfg_source
     assert "self.decimation = 8" in cfg_source
+    assert 'self.scene.terrain.terrain_type = "generator"' in cfg_source
+    assert "self.scene.terrain.terrain_generator = FLAT_FOUNDATION_TERRAIN_CFG.copy()" in cfg_source
+    assert "self.scene.terrain.use_terrain_origins = False" in cfg_source
+    assert "self.scene.terrain.visual_material = None" in cfg_source
+    assert "self.scene.sky_light.spawn.texture_file = None" in cfg_source
+    assert 'self.scene.terrain.terrain_type = "plane"' not in cfg_source
     assert "self.commands.base_velocity = mdp.WTWWalkingVelocityCommandCfg(" in cfg_source
     assert "self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE" in cfg_source
     assert "self.commands.gripper_joint_pos = mdp.ArmJointPositionCommandCfg(" in cfg_source
