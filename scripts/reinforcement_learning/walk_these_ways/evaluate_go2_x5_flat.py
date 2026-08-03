@@ -220,8 +220,15 @@ def _configure_environment(
 
     env_cfg.scene.num_envs = 1
     env_cfg.scene.env_spacing = 4.0
-    env_cfg.scene.terrain.terrain_type = "plane"
-    env_cfg.scene.terrain.terrain_generator = None
+    # Keep the task's locally generated flat mesh. Isaac Lab's built-in plane
+    # downloads its USD from NVIDIA S3 and makes an otherwise offline evaluation
+    # fail when that asset is unavailable.
+    if (
+        env_cfg.scene.terrain.terrain_type != "generator"
+        or env_cfg.scene.terrain.terrain_generator is None
+    ):
+        raise ValueError("WTW evaluation requires the task's local flat terrain generator.")
+    env_cfg.scene.terrain.use_terrain_origins = False
     _set_if_present(env_cfg.scene.terrain, "max_init_terrain_level", None)
     env_cfg.episode_length_s = max(float(trial_duration_s) + 10.0, 60.0)
     _set_if_present(env_cfg, "export_io_descriptors", False)
@@ -1099,7 +1106,7 @@ def main() -> None:
         "profile": args_cli.profile,
         "repeats": args_cli.repeats,
         "seed": args_cli.seed,
-        "terrain": "deterministic_plane",
+        "terrain": "deterministic_local_flat_mesh",
         "control_dt_s": dt,
         "policy_action_warmup_steps": args_cli.policy_action_warmup_steps,
         "policy_observation_dim": OBSERVATION_DIM,
