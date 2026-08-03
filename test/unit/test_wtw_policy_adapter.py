@@ -482,3 +482,49 @@ def test_walking_acceptance_uses_cycle_means_and_ignores_stop_gate() -> None:
         expected_command_segments=2,
     )
     assert missing_command["walking_only"]["passed"] is False
+
+
+def test_stationary_metrics_distinguish_standing_from_stepping() -> None:
+    feet = ("FL_foot", "FR_foot", "RL_foot", "RR_foot")
+    rows = []
+    for index in range(100):
+        arm_command = [0.3 * index / 99.0, 0.3, 0.5, 0.0, 0.0, 0.0]
+        rows.append(
+            {
+                "segment_time_s": (index + 1) * wtw.POLICY_DT_S,
+                "state_is_post_auto_reset": False,
+                "done": False,
+                "measured_vx": 0.01,
+                "measured_vy": 0.0,
+                "measured_wz": 0.01,
+                "base_x": 0.0001 * index,
+                "base_y": 0.0,
+                "base_z": 0.30,
+                "base_roll": 0.01,
+                "base_pitch": 0.01,
+                "foot_contact_force_n": {name: 50.0 for name in feet},
+                "foot_contact_slip_mps": {name: 0.01 for name in feet},
+                "leg_joint_vel": [0.1] * wtw.ACTION_DIM,
+                "nonfoot_contact_bodies": [],
+                "arm_command": arm_command,
+                "arm_joint_pos": [arm_command[0] - 0.01, *arm_command[1:]],
+                "arm_tracking_max_abs_rad": 0.01,
+            }
+        )
+
+    standing = metrics.stationary_segment_metrics(rows, arm_motion_required=True)
+    assert standing["passed"] is True
+    assert standing["base_stable"] is True
+    assert standing["feet_static"] is True
+
+    stepping_rows = copy.deepcopy(rows)
+    for index, row in enumerate(stepping_rows):
+        row["base_x"] = 0.002 * index
+        row["leg_joint_vel"] = [0.8] * wtw.ACTION_DIM
+        if index % 2:
+            row["foot_contact_force_n"]["FL_foot"] = 0.0
+    stepping = metrics.stationary_segment_metrics(stepping_rows)
+    assert stepping["passed"] is False
+    assert stepping["base_stable"] is False
+    assert stepping["feet_static"] is False
+    assert "foot_liftoff" in stepping["feet_failed_checks"]

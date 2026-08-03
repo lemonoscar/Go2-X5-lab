@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from statistics import fmean
+from statistics import fmean, pstdev
 from typing import Any, Sequence
 
 
@@ -29,6 +29,159 @@ WALKING_COMMANDS = (
     ("mix_reverse_left", -0.50, 0.25, -0.30),
     ("mix_reverse_right", -0.50, -0.25, 0.30),
 )
+
+
+def stationary_segment_metrics(
+    rows: Sequence[dict[str, Any]],
+    *,
+    steady_fraction: float = 0.75,
+    arm_motion_required: bool = False,
+    foot_contact_threshold_n: float = 1.0,
+    max_linear_velocity_rmse_mps: float = 0.05,
+    max_yaw_velocity_rmse_rad_s: float = 0.08,
+    max_xy_drift_m: float = 0.10,
+    max_tilt_rad: float = 0.15,
+    max_base_height_std_m: float = 0.02,
+    min_all_feet_contact_fraction: float = 0.95,
+    max_foot_slip_mps: float = 0.05,
+    max_leg_velocity_rms_rad_s: float = 0.50,
+    max_arm_tracking_error_rad: float = 0.15,
+) -> dict[str, Any]:
+    """Measure true zero-command stationarity, including whether feet keep stepping."""
+
+    if not rows:
+        raise ValueError("stationary metrics require samples")
+    if not 0.0 < steady_fraction <= 1.0:
+        raise ValueError("steady_fraction must be in (0, 1]")
+    valid = [row for row in rows if not bool(row.get("state_is_post_auto_reset", False))]
+    if not valid:
+        raise ValueError("stationary metrics require pre-reset samples")
+    window = valid[-max(1, math.floor(len(valid) * steady_fraction)) :]
+
+    linear_velocity_rmse = math.sqrt(
+        fmean(float(row["measured_vx"]) ** 2 + float(row["measured_vy"]) ** 2 for row in window)
+    )
+    yaw_velocity_rmse = math.sqrt(fmean(float(row["measured_wz"]) ** 2 for row in window))
+    start_x, start_y = float(window[0]["base_x"]), float(window[0]["base_y"])
+    xy_drift = [
+        math.hypot(float(row["base_x"]) - start_x, float(row["base_y"]) - start_y)
+        for row in window
+    ]
+    max_tilt = max(math.hypot(float(row["base_roll"]), float(row["base_pitch"])) for row in window)
+    base_height_std = pstdev(float(row["base_z"]) for row in window) if len(window) > 1 else 0.0
+
+    foot_names = tuple(window[0].get("foot_contact_force_n", {}))
+    contacts = {
+        name: [float(row["foot_contact_force_n"][name]) > foot_contact_threshold_n for row in window]
+        for name in foot_names
+    }
+    per_foot_contact_fraction = {
+        name: sum(values) / len(values) for name, values in contacts.items()
+    }
+    liftoff_count = {
+        name: sum(before and not after for before, after in zip(values, values[1:]))
+        for name, values in contacts.items()
+    }
+    all_feet_contact_fraction = (
+        sum(all(contacts[name][index] for name in foot_names) for index in range(len(window)))
+        / len(window)
+        if foot_names
+        else 0.0
+    )
+    peak_foot_slip = max(
+        (float(value) for row in window for value in row.get("foot_contact_slip_mps", {}).values()),
+        default=0.0,
+    )
+    leg_velocity_rms = math.sqrt(
+        fmean(float(value) ** 2 for row in window for value in row["leg_joint_vel"])
+    )
+    nonfoot_contacts = sorted(
+        {str(name) for row in window for name in row.get("nonfoot_contact_bodies", [])}
+    )
+
+    arm_commands = [row["arm_command"] for row in window]
+    arm_positions = [row["arm_joint_pos"] for row in window]
+    arm_command_range = [
+        max(float(row[index]) for row in arm_commands) - min(float(row[index]) for row in arm_commands)
+        for index in range(len(arm_commands[0]))
+    ]
+    arm_position_range = [
+        max(float(row[index]) for row in arm_positions) - min(float(row[index]) for row in arm_positions)
+        for index in range(len(arm_positions[0]))
+    ]
+    arm_tracking_max = max(float(row["arm_tracking_max_abs_rad"]) for row in window)
+
+    base_failed = []
+    if any(bool(row.get("done", False)) for row in rows):
+        base_failed.append("termination")
+    if linear_velocity_rmse > max_linear_velocity_rmse_mps:
+        base_failed.append("linear_velocity_rmse")
+    if yaw_velocity_rmse > max_yaw_velocity_rmse_rad_s:
+        base_failed.append("yaw_velocity_rmse")
+    if max(xy_drift) > max_xy_drift_m:
+        base_failed.append("xy_drift")
+    if max_tilt > max_tilt_rad:
+        base_failed.append("tilt")
+    if base_height_std > max_base_height_std_m:
+        base_failed.append("base_height_std")
+    if nonfoot_contacts:
+        base_failed.append("nonfoot_contact")
+
+    feet_failed = []
+    if all_feet_contact_fraction < min_all_feet_contact_fraction:
+        feet_failed.append("all_feet_contact_fraction")
+    if any(liftoff_count.values()):
+        feet_failed.append("foot_liftoff")
+    if peak_foot_slip > max_foot_slip_mps:
+        feet_failed.append("foot_slip")
+    if leg_velocity_rms > max_leg_velocity_rms_rad_s:
+        feet_failed.append("leg_joint_velocity")
+
+    arm_failed = []
+    if arm_tracking_max > max_arm_tracking_error_rad:
+        arm_failed.append("arm_tracking_error")
+    if arm_motion_required and max(arm_command_range, default=0.0) < 0.10:
+        arm_failed.append("arm_command_did_not_move")
+    if arm_motion_required and max(arm_position_range, default=0.0) < 0.05:
+        arm_failed.append("arm_did_not_move")
+
+    return {
+        "sample_count": len(window),
+        "duration_s": float(window[-1]["segment_time_s"]) - float(window[0]["segment_time_s"]),
+        "linear_velocity_rmse_mps": linear_velocity_rmse,
+        "yaw_velocity_rmse_rad_s": yaw_velocity_rmse,
+        "final_xy_drift_m": xy_drift[-1],
+        "max_xy_drift_m": max(xy_drift),
+        "max_tilt_rad": max_tilt,
+        "base_height_std_m": base_height_std,
+        "all_feet_contact_fraction": all_feet_contact_fraction,
+        "per_foot_contact_fraction": per_foot_contact_fraction,
+        "per_foot_liftoff_count": liftoff_count,
+        "peak_contact_foot_slip_mps": peak_foot_slip,
+        "leg_velocity_rms_rad_s": leg_velocity_rms,
+        "nonfoot_contact_bodies": nonfoot_contacts,
+        "arm_command_range_rad": arm_command_range,
+        "arm_position_range_rad": arm_position_range,
+        "arm_tracking_max_abs_rad": arm_tracking_max,
+        "base_failed_checks": base_failed,
+        "feet_failed_checks": feet_failed,
+        "arm_failed_checks": arm_failed,
+        "base_stable": not base_failed,
+        "feet_static": not feet_failed,
+        "arm_motion_valid": not arm_failed,
+        "passed": not (base_failed or feet_failed or arm_failed),
+        "criteria": {
+            "max_linear_velocity_rmse_mps": max_linear_velocity_rmse_mps,
+            "max_yaw_velocity_rmse_rad_s": max_yaw_velocity_rmse_rad_s,
+            "max_xy_drift_m": max_xy_drift_m,
+            "max_tilt_rad": max_tilt_rad,
+            "max_base_height_std_m": max_base_height_std_m,
+            "min_all_feet_contact_fraction": min_all_feet_contact_fraction,
+            "max_foot_slip_mps": max_foot_slip_mps,
+            "max_leg_velocity_rms_rad_s": max_leg_velocity_rms_rad_s,
+            "max_arm_tracking_error_rad": max_arm_tracking_error_rad,
+        },
+    }
 
 
 def source_planar_deadzone(vx: float, vy: float, *, threshold: float = 0.20) -> tuple[float, float]:

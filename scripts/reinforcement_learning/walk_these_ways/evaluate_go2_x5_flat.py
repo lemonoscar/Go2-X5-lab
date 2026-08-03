@@ -48,7 +48,7 @@ parser.add_argument(
 parser.add_argument("--output-dir", type=str, required=True)
 parser.add_argument(
     "--profile",
-    choices=("walking", "nominal", "quick", "full", "planar"),
+    choices=("walking", "stationary", "nominal", "quick", "full", "planar"),
     default="walking",
 )
 parser.add_argument("--settle-seconds", type=float, default=2.0)
@@ -84,6 +84,15 @@ parser.add_argument(
     metavar=("J1", "J2", "J3", "J4", "J5", "J6"),
     help="Fixed absolute arm joint pose in radians; the policy never observes or controls it.",
 )
+parser.add_argument(
+    "--slow-arm-offset",
+    type=float,
+    nargs=6,
+    default=(0.35, 0.30, 0.20, 0.0, 0.0, 0.0),
+    metavar=("J1", "J2", "J3", "J4", "J5", "J6"),
+    help="Peak joint offset for the stationary profile's smooth external arm motion.",
+)
+parser.add_argument("--slow-arm-period-seconds", type=float, default=20.0)
 parser.add_argument("--steady-fraction", type=float, default=0.50)
 parser.add_argument("--gain-min", type=float, default=0.85)
 parser.add_argument("--gain-max", type=float, default=1.15)
@@ -158,6 +167,7 @@ from wtw_evaluation_metrics import (  # noqa: E402
     WALKING_COMMANDS,
     augment_summary_with_wtw_metrics,
     source_planar_deadzone,
+    stationary_segment_metrics,
 )
 
 
@@ -403,7 +413,7 @@ def main() -> None:
         raise ValueError("--repeats must be positive")
     hold_seconds = args_cli.hold_seconds
     if hold_seconds is None:
-        hold_seconds = 20.0 if args_cli.profile == "walking" else 3.0
+        hold_seconds = 40.0 if args_cli.profile == "stationary" else 20.0 if args_cli.profile == "walking" else 3.0
     stop_seconds = args_cli.stop_seconds
     if stop_seconds is None:
         stop_seconds = 2.0 if args_cli.profile == "walking" else 1.5
@@ -419,6 +429,8 @@ def main() -> None:
         raise ValueError("--max-arm-tracking-error-rad must be positive")
     if args_cli.max_gripper_tracking_error_m <= 0.0:
         raise ValueError("--max-gripper-tracking-error-m must be positive")
+    if args_cli.slow_arm_period_seconds <= 0.0:
+        raise ValueError("--slow-arm-period-seconds must be positive")
     if min(
         args_cli.max_wz_harmonic_amplitude,
         args_cli.max_torque_saturation_rate,
@@ -459,6 +471,18 @@ def main() -> None:
             stop_s=stop_seconds,
             repeats=args_cli.repeats,
         )
+    elif args_cli.profile == "stationary":
+        schedule = [
+            CommandSegment("initial_settle", args_cli.settle_seconds, kind="settle", evaluate=False)
+        ]
+        for repeat in range(1, args_cli.repeats + 1):
+            for name in ("zero_fixed_arm", "zero_slow_arm"):
+                schedule.extend(
+                    (
+                        CommandSegment(f"{name}_r{repeat}", hold_seconds),
+                        CommandSegment(f"stop_after_{name}_r{repeat}", stop_seconds, kind="stop"),
+                    )
+                )
     elif args_cli.profile == "nominal":
         schedule = [
             CommandSegment("initial_settle", args_cli.settle_seconds, kind="settle", evaluate=False)
@@ -586,6 +610,10 @@ def main() -> None:
             )
 
     arm_target = torch.tensor(arm_pose, dtype=torch.float32, device=raw_env.device).unsqueeze(0)
+    slow_arm_offset = torch.tensor(
+        args_cli.slow_arm_offset, dtype=torch.float32, device=raw_env.device
+    ).unsqueeze(0)
+    slow_arm_peak_target = arm_target + slow_arm_offset
     gripper_target = torch.tensor(
         DEFAULT_GRIPPER_JOINT_POS, dtype=torch.float32, device=raw_env.device
     ).unsqueeze(0)
@@ -593,6 +621,11 @@ def main() -> None:
     if torch.any(arm_target[0] < arm_limits[:, 0]) or torch.any(arm_target[0] > arm_limits[:, 1]):
         env.close()
         raise ValueError(f"--arm-pose is outside the soft joint limits: {arm_pose}")
+    if torch.any(slow_arm_peak_target[0] < arm_limits[:, 0]) or torch.any(
+        slow_arm_peak_target[0] > arm_limits[:, 1]
+    ):
+        env.close()
+        raise ValueError("--arm-pose + --slow-arm-offset is outside the soft joint limits")
     gripper_limits = robot.data.joint_pos_limits[0, gripper_joint_ids]
     if torch.any(gripper_target[0] < gripper_limits[:, 0]) or torch.any(
         gripper_target[0] > gripper_limits[:, 1]
@@ -712,7 +745,9 @@ def main() -> None:
     global_step = 0
     samples_path = output_dir / "samples.jsonl"
 
-    def set_external_commands(segment: CommandSegment) -> None:
+    def set_external_commands(
+        segment: CommandSegment, segment_time_s: float
+    ) -> torch.Tensor:
         base_command_term.vel_command_b[:, 0] = segment.vx
         base_command_term.vel_command_b[:, 1] = segment.vy
         base_command_term.vel_command_b[:, 2] = segment.wz
@@ -722,8 +757,15 @@ def main() -> None:
             base_command_term.is_standing_env[:] = (
                 abs(segment.vx) + abs(segment.vy) + abs(segment.wz) <= 1.0e-6
             )
-        arm_command_term.command_buffer[:] = arm_target
+        current_arm_target = arm_target
+        if segment.name.startswith("zero_slow_arm"):
+            blend = 0.5 - 0.5 * math.cos(
+                2.0 * math.pi * segment_time_s / args_cli.slow_arm_period_seconds
+            )
+            current_arm_target = arm_target + blend * slow_arm_offset
+        arm_command_term.command_buffer[:] = current_arm_target
         gripper_command_term.command_buffer[:] = gripper_target
+        return current_arm_target
 
     def run_segment(
         segment: CommandSegment,
@@ -744,7 +786,8 @@ def main() -> None:
         )
         for segment_step in range(steps):
             wall_start = time.perf_counter()
-            set_external_commands(segment)
+            segment_time_s = (segment_step + 1) * dt
+            current_arm_target = set_external_commands(segment, segment_time_s)
             raw_action = adapter.infer_raw()
             clipped_action = raw_action.clamp(-ACTION_CLIP, ACTION_CLIP)
             if args_cli.policy_action_warmup_steps > 0:
@@ -777,7 +820,7 @@ def main() -> None:
             leg_vel = robot.data.joint_vel[:, leg_joint_ids]
             measured_arm = robot.data.joint_pos[:, arm_joint_ids]
             measured_gripper = robot.data.joint_pos[:, gripper_joint_ids]
-            arm_error = measured_arm - arm_target
+            arm_error = measured_arm - current_arm_target
             gripper_error = measured_gripper - gripper_target
             leg_target = q0.unsqueeze(0) + action_scales.unsqueeze(0) * applied_action
             computed_torque = robot.data.computed_torque[:, leg_joint_ids]
@@ -808,7 +851,7 @@ def main() -> None:
                 "segment_index": segment_index,
                 "segment_name": segment.name,
                 "segment_kind": segment.kind,
-                "segment_time_s": (segment_step + 1) * dt,
+                "segment_time_s": segment_time_s,
                 "evaluate": segment.evaluate,
                 "cmd_vx": segment.vx,
                 "cmd_vy": segment.vy,
@@ -844,6 +887,13 @@ def main() -> None:
                 "foot_contact_impulse_n_s": dict(
                     zip(foot_names, foot_impulse_n_s.tolist(), strict=True)
                 ),
+                "foot_height_m": dict(
+                    zip(
+                        foot_names,
+                        robot.data.body_pos_w[0, foot_body_ids, 2].tolist(),
+                        strict=True,
+                    )
+                ),
                 "nonfoot_contact_bodies": nonfoot_contact_bodies,
                 "nonfoot_contact_peak_force_n": dict(
                     zip(
@@ -852,7 +902,7 @@ def main() -> None:
                         strict=True,
                     )
                 ),
-                "arm_command": arm_target[0].tolist(),
+                "arm_command": current_arm_target[0].tolist(),
                 "arm_joint_pos": measured_arm[0].tolist(),
                 "arm_joint_error": arm_error[0].tolist(),
                 "arm_tracking_rmse_rad": float(torch.sqrt(torch.mean(arm_error[0].square())).item()),
@@ -990,6 +1040,33 @@ def main() -> None:
             segment.evaluate and segment.kind == "command" for segment in schedule
         ),
     )
+    if args_cli.profile == "stationary":
+        stationary_segments = []
+        for metric in summary["segments"]:
+            if metric["segment_kind"] != "command":
+                continue
+            segment_rows = [
+                row
+                for row in samples
+                if int(row["segment_index"]) == int(metric["segment_index"])
+            ]
+            result = stationary_segment_metrics(
+                segment_rows,
+                arm_motion_required="zero_slow_arm" in metric["segment_name"],
+                max_arm_tracking_error_rad=args_cli.max_arm_tracking_error_rad,
+            )
+            result["segment_name"] = metric["segment_name"]
+            stationary_segments.append(result)
+        expected_stationary_segments = 2 * args_cli.repeats
+        summary["stationary"] = {
+            "segments": stationary_segments,
+            "expected_segments": expected_stationary_segments,
+            "passed_segments": sum(result["passed"] for result in stationary_segments),
+            "passed": bool(
+                len(stationary_segments) == expected_stationary_segments
+                and all(result["passed"] for result in stationary_segments)
+            ),
+        }
     valid_arm_rows = [row for row in samples if not row["state_is_post_auto_reset"]]
     arm_step_rmse = [float(row["arm_tracking_rmse_rad"]) for row in valid_arm_rows]
     arm_max_abs = [float(row["arm_tracking_max_abs_rad"]) for row in valid_arm_rows]
@@ -1116,6 +1193,12 @@ def main() -> None:
         "policy_default_joint_pos": list(DEFAULT_JOINT_POS),
         "policy_action_scales": list(ACTION_SCALES),
         "fixed_arm_pose_rad": list(arm_pose),
+        "slow_arm_motion": {
+            "profile_enabled": args_cli.profile == "stationary",
+            "peak_offset_rad": list(args_cli.slow_arm_offset),
+            "period_s": args_cli.slow_arm_period_seconds,
+            "trajectory": "half_cosine_out_and_back",
+        },
         "fixed_gripper_pose_m": list(DEFAULT_GRIPPER_JOINT_POS),
         "manipulator_joint_order": list(FULL_MANIPULATOR_JOINT_NAMES),
         "manipulator_control": "external_absolute_position_command; zero policy dimensions",
@@ -1133,6 +1216,7 @@ def main() -> None:
         "independent_reset_per_command": True,
         "continued_after_termination": True,
         "walking_only_acceptance": args_cli.profile == "walking",
+        "stationary_acceptance": args_cli.profile == "stationary",
         "stop_segments_are_diagnostic_only": True,
         "source_planar_deadzone_is_reported_not_applied": True,
         "gait_cycle_metrics": {
@@ -1194,6 +1278,20 @@ def main() -> None:
             "- 固定夹爪没有 termination auto-reset 前的有效样本；"
             "fixture status：`insufficient_pre_reset_samples`；fixture pass：**False**。\n"
         )
+    stationary_result_text = ""
+    if args_cli.profile == "stationary":
+        stationary_result_text = "\n## 零速度静止专项\n\n"
+        for result in summary["stationary"]["segments"]:
+            stationary_result_text += (
+                f"- `{result['segment_name']}`：base stable **{result['base_stable']}**；"
+                f"feet static **{result['feet_static']}**；arm valid "
+                f"**{result['arm_motion_valid']}**；总通过 **{result['passed']}**。"
+                f"线速度 RMSE `{result['linear_velocity_rmse_mps']:.4f} m/s`，"
+                f"yaw RMSE `{result['yaw_velocity_rmse_rad_s']:.4f} rad/s`，"
+                f"最大 XY 漂移 `{result['max_xy_drift_m']:.4f} m`，"
+                f"全足接触率 `{result['all_feet_contact_fraction']:.3f}`，"
+                f"抬足次数 `{sum(result['per_foot_liftoff_count'].values())}`。\n"
+            )
     with (output_dir / "report.md").open("a", encoding="utf-8") as stream:
         stream.write(
             "\n## WTW / 固定机械臂补充\n\n"
@@ -1208,6 +1306,7 @@ def main() -> None:
             "非足接触 body，以及逐关节机械臂 target/actual/error。\n"
             "- done 行的机器人状态是 Isaac Lab 自动复位后的快照；"
             "终止前趋势应读取前一行。\n"
+            f"{stationary_result_text}"
         )
     walking_result = summary["walking_only"]
     print(
@@ -1217,6 +1316,13 @@ def main() -> None:
         f"stops_diagnostic={summary['passed_stop_segments']}/{summary['stop_segments']} "
         f"overall_pass={summary['passed']}"
     )
+    if args_cli.profile == "stationary":
+        print(
+            f"[wtw-go2x5] stationary="
+            f"{summary['stationary']['passed_segments']}/"
+            f"{summary['stationary']['expected_segments']} "
+            f"passed={summary['stationary']['passed']}"
+        )
 
 
 if __name__ == "__main__":
