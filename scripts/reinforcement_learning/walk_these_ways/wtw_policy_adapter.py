@@ -43,6 +43,23 @@ WTW_JOINT_NAMES = (
 )
 DEFAULT_JOINT_POS = (0.1, 0.8, -1.5, -0.1, 0.8, -1.5, 0.1, 1.0, -1.5, -0.1, 1.0, -1.5)
 ACTION_SCALES = (0.125, 0.25, 0.25) * 4
+# Fixed feed-forward action obtained from the steady-cycle mean of actor1500 at
+# 0.5 m/s.  Unlike a zero action, it supplies the gravity torques needed by the
+# front-loaded Go2-X5 to keep all four feet down at 40/1 leg PD gains.
+STAND_ACTION = (
+    -1.0105,
+    -0.2757,
+    0.4758,
+    1.5379,
+    -0.1350,
+    0.4137,
+    -1.2827,
+    -0.1131,
+    -0.0578,
+    1.4618,
+    0.0613,
+    0.0940,
+)
 COMMAND_SCALES = (2.0, 2.0, 0.25, 2.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.15, 0.3, 0.3, 1.0, 1.0, 1.0)
 
 KNOWN_BODY_SHA256 = "7b6e604e2147742a89ef50d91e7ee501023331b2589d1c3143a9d2ba858db7b5"

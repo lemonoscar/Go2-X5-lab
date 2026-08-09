@@ -75,7 +75,15 @@ parser.add_argument(
     "--stand-transition-steps",
     type=int,
     default=20,
-    help="Steps used to blend the last walking action back to the fixed q0 stand pose.",
+    help="Steps used to blend the last walking action into the fixed stand pose.",
+)
+parser.add_argument(
+    "--stand-action",
+    type=float,
+    nargs=12,
+    default=None,
+    metavar=tuple(f"A{index}" for index in range(1, 13)),
+    help="Optional fixed 12-D leg action for STAND; defaults to the calibrated Go2-X5 pose.",
 )
 parser.add_argument("--leg-stiffness", type=float, default=40.0)
 parser.add_argument("--leg-damping", type=float, default=1.0)
@@ -164,6 +172,7 @@ from wtw_policy_adapter import (  # noqa: E402
     HISTORY_LENGTH,
     OBSERVATION_DIM,
     POLICY_DT_S,
+    STAND_ACTION,
     GRIPPER_JOINT_NAMES,
     WTW_JOINT_NAMES,
     WTWPolicyAdapter,
@@ -762,6 +771,11 @@ def main() -> None:
     stand_policy_command = make_standing_command(batch_size=1, device=raw_env.device)
     action_scales = torch.tensor(ACTION_SCALES, dtype=torch.float32, device=raw_env.device)
     q0 = torch.tensor(DEFAULT_JOINT_POS, dtype=torch.float32, device=raw_env.device)
+    stand_action = torch.tensor(
+        STAND_ACTION if args_cli.stand_action is None else args_cli.stand_action,
+        dtype=torch.float32,
+        device=raw_env.device,
+    ).unsqueeze(0)
     leg_effort_limits = robot.data.joint_effort_limits[0, leg_joint_ids]
 
     samples: list[dict[str, object]] = []
@@ -829,7 +843,9 @@ def main() -> None:
                     )
                 else:
                     action_scale = 0.0
-                applied_action = stand_entry_action * action_scale
+                applied_action = (
+                    stand_action + (stand_entry_action - stand_action) * action_scale
+                )
             else:
                 raw_action = adapter.infer_raw()
                 clipped_action = raw_action.clamp(-ACTION_CLIP, ACTION_CLIP)
@@ -903,6 +919,7 @@ def main() -> None:
                 "source_deadzone_command": [deadzone_vx, deadzone_vy, segment.wz],
                 "wtw_command": policy_command[0].tolist(),
                 "controller_mode": "STAND" if standing_mode else "WALK_TROT",
+                "stand_target_action": stand_action[0].tolist(),
                 "measured_vx": float(robot.data.root_lin_vel_b[0, 0].item()),
                 "measured_vy": float(robot.data.root_lin_vel_b[0, 1].item()),
                 "measured_wz": float(robot.data.root_ang_vel_b[0, 2].item()),
@@ -1245,7 +1262,8 @@ def main() -> None:
                 "phase_offset_bound": [0.0, 0.0, 0.0],
                 "gait_frequency_hz": 0.0,
                 "actor_bypassed": True,
-                "leg_target": "WTW q0 after transition",
+                "leg_target": "q0 + action_scale * fixed stand action",
+                "fixed_action": stand_action[0].tolist(),
             },
             "walk_trot": {
                 "velocity_condition": "otherwise",
