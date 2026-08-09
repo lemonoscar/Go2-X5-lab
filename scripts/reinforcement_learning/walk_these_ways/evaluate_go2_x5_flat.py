@@ -71,6 +71,12 @@ parser.add_argument(
     default=0,
     help="Optional takeover ramp. Zero matches the source WTW training/deployment action path.",
 )
+parser.add_argument(
+    "--stand-transition-steps",
+    type=int,
+    default=20,
+    help="Steps used to blend the last walking action back to the fixed q0 stand pose.",
+)
 parser.add_argument("--leg-stiffness", type=float, default=40.0)
 parser.add_argument("--leg-damping", type=float, default=1.0)
 parser.add_argument("--spawn-height", type=float, default=0.30)
@@ -161,7 +167,8 @@ from wtw_policy_adapter import (  # noqa: E402
     GRIPPER_JOINT_NAMES,
     WTW_JOINT_NAMES,
     WTWPolicyAdapter,
-    make_walking_command,
+    make_standing_command,
+    make_two_state_command,
 )
 from wtw_evaluation_metrics import (  # noqa: E402
     WALKING_COMMANDS,
@@ -421,6 +428,8 @@ def main() -> None:
         raise ValueError("--settle-seconds, --hold-seconds, and --stop-seconds must be positive")
     if args_cli.policy_action_warmup_steps < 0:
         raise ValueError("--policy-action-warmup-steps must be non-negative")
+    if args_cli.stand_transition_steps < 0:
+        raise ValueError("--stand-transition-steps must be non-negative")
     if args_cli.leg_stiffness <= 0.0 or args_cli.leg_damping < 0.0:
         raise ValueError("leg stiffness must be positive and damping must be non-negative")
     if args_cli.spawn_height <= 0.18:
@@ -483,6 +492,20 @@ def main() -> None:
                         CommandSegment(f"stop_after_{name}_r{repeat}", stop_seconds, kind="stop"),
                     )
                 )
+            schedule.extend(
+                (
+                    CommandSegment(
+                        f"walk_before_stand_r{repeat}",
+                        min(20.0, hold_seconds),
+                        vx=0.50,
+                    ),
+                    CommandSegment(
+                        f"stand_after_walk_r{repeat}",
+                        hold_seconds,
+                        kind="stop",
+                    ),
+                )
+            )
     elif args_cli.profile == "nominal":
         schedule = [
             CommandSegment("initial_settle", args_cli.settle_seconds, kind="settle", evaluate=False)
@@ -518,7 +541,9 @@ def main() -> None:
         raise RuntimeError("velocity benchmark schedule does not alternate command and stop segments")
 
     arm_pose = tuple(float(value) for value in args_cli.arm_pose)
-    trial_duration_s = args_cli.settle_seconds + hold_seconds + stop_seconds
+    trial_duration_s = args_cli.settle_seconds + max(
+        command.duration_s + stop.duration_s for command, stop in command_stop_pairs
+    )
     env_cfg = parse_env_cfg(
         args_cli.task,
         device=args_cli.device,
@@ -734,7 +759,7 @@ def main() -> None:
         env.close()
         raise RuntimeError("contact force tensor history does not match configured decimation")
     mass_com = _live_mass_com(robot)
-    zero_policy_command = make_walking_command(0.0, batch_size=1, device=raw_env.device)
+    stand_policy_command = make_standing_command(batch_size=1, device=raw_env.device)
     action_scales = torch.tensor(ACTION_SCALES, dtype=torch.float32, device=raw_env.device)
     q0 = torch.tensor(DEFAULT_JOINT_POS, dtype=torch.float32, device=raw_env.device)
     leg_effort_limits = robot.data.joint_effort_limits[0, leg_joint_ids]
@@ -780,24 +805,42 @@ def main() -> None:
         nonlocal benchmark_time_s, global_step
 
         steps = max(1, round(segment.duration_s / dt))
+        standing_mode = bool(torch.all(policy_command[:, 4] == 0.0).item())
+        stand_entry_action = adapter.previous_action.clone()
+        if standing_mode:
+            adapter.gait_index.zero_()
         print(
             f"[wtw-go2x5] trial={trial_index} segment={segment.name} steps={steps} "
+            f"mode={'STAND' if standing_mode else 'WALK_TROT'} "
             f"cmd=({segment.vx:.3f}, {segment.vy:.3f}, {segment.wz:.3f})"
         )
         for segment_step in range(steps):
             wall_start = time.perf_counter()
             segment_time_s = (segment_step + 1) * dt
             current_arm_target = set_external_commands(segment, segment_time_s)
-            raw_action = adapter.infer_raw()
-            clipped_action = raw_action.clamp(-ACTION_CLIP, ACTION_CLIP)
-            if args_cli.policy_action_warmup_steps > 0:
-                action_scale = min(
-                    1.0,
-                    float(trial_step + 1) / float(args_cli.policy_action_warmup_steps),
-                )
+            if standing_mode:
+                raw_action = torch.zeros_like(stand_entry_action)
+                clipped_action = raw_action
+                if args_cli.stand_transition_steps > 0:
+                    action_scale = max(
+                        0.0,
+                        1.0
+                        - float(segment_step + 1) / float(args_cli.stand_transition_steps),
+                    )
+                else:
+                    action_scale = 0.0
+                applied_action = stand_entry_action * action_scale
             else:
-                action_scale = 1.0
-            applied_action = clipped_action * action_scale
+                raw_action = adapter.infer_raw()
+                clipped_action = raw_action.clamp(-ACTION_CLIP, ACTION_CLIP)
+                if args_cli.policy_action_warmup_steps > 0:
+                    action_scale = min(
+                        1.0,
+                        float(trial_step + 1) / float(args_cli.policy_action_warmup_steps),
+                    )
+                else:
+                    action_scale = 1.0
+                applied_action = clipped_action * action_scale
             # Do not wrap simulator stepping in torch.inference_mode(): Isaac Lab
             # mutates its state buffers during later explicit resets.
             _, _, terminated, truncated, _ = env.step(applied_action)
@@ -859,6 +902,7 @@ def main() -> None:
                 "raw_command": [segment.vx, segment.vy, segment.wz],
                 "source_deadzone_command": [deadzone_vx, deadzone_vy, segment.wz],
                 "wtw_command": policy_command[0].tolist(),
+                "controller_mode": "STAND" if standing_mode else "WALK_TROT",
                 "measured_vx": float(robot.data.root_lin_vel_b[0, 0].item()),
                 "measured_vy": float(robot.data.root_lin_vel_b[0, 1].item()),
                 "measured_wz": float(robot.data.root_ang_vel_b[0, 2].item()),
@@ -971,7 +1015,7 @@ def main() -> None:
                 env.reset(seed=args_cli.seed)
                 adapter.reset(num_envs=1)
                 trial_step = 0
-                command_policy_command = make_walking_command(
+                command_policy_command = make_two_state_command(
                     command_segment.vx,
                     command_segment.vy,
                     command_segment.wz,
@@ -1004,7 +1048,7 @@ def main() -> None:
                     trial_index=trial_index,
                     trial_step=trial_step,
                     policy_command=command_policy_command,
-                    next_policy_command=zero_policy_command,
+                    next_policy_command=stand_policy_command,
                     stream=stream,
                 )
                 if fell:
@@ -1014,8 +1058,8 @@ def main() -> None:
                     segment_index=schedule.index(stop_segment),
                     trial_index=trial_index,
                     trial_step=trial_step,
-                    policy_command=zero_policy_command,
-                    next_policy_command=zero_policy_command,
+                    policy_command=stand_policy_command,
+                    next_policy_command=stand_policy_command,
                     stream=stream,
                 )
     finally:
@@ -1043,7 +1087,12 @@ def main() -> None:
     if args_cli.profile == "stationary":
         stationary_segments = []
         for metric in summary["segments"]:
-            if metric["segment_kind"] != "command":
+            is_zero_hold = (
+                metric["segment_kind"] == "command"
+                and metric["segment_name"].startswith("zero_")
+            )
+            is_stand_after_walk = metric["segment_name"].startswith("stand_after_walk")
+            if not (is_zero_hold or is_stand_after_walk):
                 continue
             segment_rows = [
                 row
@@ -1057,7 +1106,7 @@ def main() -> None:
             )
             result["segment_name"] = metric["segment_name"]
             stationary_segments.append(result)
-        expected_stationary_segments = 2 * args_cli.repeats
+        expected_stationary_segments = 3 * args_cli.repeats
         summary["stationary"] = {
             "segments": stationary_segments,
             "expected_segments": expected_stationary_segments,
@@ -1152,15 +1201,19 @@ def main() -> None:
             "status": "insufficient_pre_reset_samples",
             "passed": False,
         }
-    walking_metrics_passed = bool(summary["passed"])
+    two_state_metrics_passed = bool(summary["passed"])
+    if args_cli.profile == "stationary":
+        two_state_metrics_passed = bool(
+            two_state_metrics_passed and summary["stationary"]["passed"]
+        )
     summary["arm_fixture"] = arm_fixture
     summary["gripper_fixture"] = gripper_fixture
     summary["passed"] = bool(
-        walking_metrics_passed and arm_fixture["passed"] and gripper_fixture["passed"]
+        two_state_metrics_passed and arm_fixture["passed"] and gripper_fixture["passed"]
     )
     summary["overall_failure_reasons"] = []
-    if not walking_metrics_passed:
-        summary["overall_failure_reasons"].append("walking_only_metrics")
+    if not two_state_metrics_passed:
+        summary["overall_failure_reasons"].append("two_state_locomotion_metrics")
     if not arm_fixture["passed"]:
         summary["overall_failure_reasons"].append(f"arm_fixture_{arm_fixture['status']}")
     if not gripper_fixture["passed"]:
@@ -1186,6 +1239,23 @@ def main() -> None:
         "terrain": "deterministic_local_flat_mesh",
         "control_dt_s": dt,
         "policy_action_warmup_steps": args_cli.policy_action_warmup_steps,
+        "two_state_controller": {
+            "stand": {
+                "velocity_condition": "max(abs(vx), abs(vy), abs(wz)) <= 1e-6",
+                "phase_offset_bound": [0.0, 0.0, 0.0],
+                "gait_frequency_hz": 0.0,
+                "actor_bypassed": True,
+                "leg_target": "WTW q0 after transition",
+            },
+            "walk_trot": {
+                "velocity_condition": "otherwise",
+                "phase_offset_bound": [0.5, 0.0, 0.0],
+                "gait_frequency_hz": 2.5,
+                "actor_bypassed": False,
+            },
+            "stand_transition_steps": args_cli.stand_transition_steps,
+            "stand_transition_s": args_cli.stand_transition_steps * dt,
+        },
         "policy_observation_dim": OBSERVATION_DIM,
         "policy_history_length": HISTORY_LENGTH,
         "policy_action_dim": ACTION_DIM,
@@ -1249,6 +1319,7 @@ def main() -> None:
             "settle_s_per_command": args_cli.settle_seconds,
             "hold_s": hold_seconds,
             "stop_s": stop_seconds,
+            "max_trial_duration_s": trial_duration_s,
         },
     }
     write_benchmark_artifacts(output_dir, samples, summary, metadata)
@@ -1300,8 +1371,10 @@ def main() -> None:
             f"action warmup：`{args_cli.policy_action_warmup_steps}` steps。\n"
             f"{arm_result_text}"
             f"{gripper_result_text}"
-            "- 正式 walking pass 只统计 command segment；stop/zero-command 单独保留为诊断，"
-            "不影响 walking-only pass rate。\n"
+            "- 两态控制仅保留 STAND `(0,0,0)` 与 WALK_TROT `(0.5,0,0)`；"
+            "STAND 绕过 actor，并在走停切换时平滑回到 q0。\n"
+            "- walking pass 统计 command segment；stationary profile 还将 "
+            "`stand_after_walk` 纳入静止专项验收。\n"
             "- 每步样本记录 computed/applied torque、逐关节饱和、逐足 force/slip/impulse、"
             "非足接触 body，以及逐关节机械臂 target/actual/error。\n"
             "- done 行的机器人状态是 Isaac Lab 自动复位后的快照；"

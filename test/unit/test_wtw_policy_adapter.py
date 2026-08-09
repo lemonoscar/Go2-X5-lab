@@ -85,8 +85,9 @@ def _write_manifest(path: Path, *, body_path: Path, adaptation_path: Path) -> No
     )
 
 
-def test_contract_constants_and_nominal_walking_command() -> None:
-    command = wtw.make_walking_command(0.3, -0.1, 0.2, batch_size=2)
+def test_contract_constants_and_two_state_commands() -> None:
+    command = wtw.make_two_state_command(0.3, -0.1, 0.2, batch_size=2)
+    stand = wtw.make_two_state_command(0.0, batch_size=2)
 
     assert len(wtw.WTW_JOINT_NAMES) == wtw.ACTION_DIM
     assert wtw.DEFAULT_JOINT_POS == (
@@ -112,6 +113,13 @@ def test_contract_constants_and_nominal_walking_command() -> None:
         torch.tensor((0.3, -0.1, 0.2, 0.0, 2.5, 0.5, 0.0, 0.0, 0.5, 0.08, 0.0, 0.0, 0.25, 0.4, 0.0)),
     )
     torch.testing.assert_close(command[0], command[1])
+    torch.testing.assert_close(
+        stand[0],
+        torch.tensor(
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.25, 0.4, 0.0)
+        ),
+    )
+    torch.testing.assert_close(stand[0], stand[1])
 
 
 def test_reset_and_infer_use_zero_history_and_clip_actions() -> None:

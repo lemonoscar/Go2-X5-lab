@@ -95,6 +95,34 @@ def make_walking_command(
     return torch.tensor(command, dtype=torch.float32, device=device).repeat(batch_size, 1)
 
 
+def make_standing_command(
+    *,
+    batch_size: int = 1,
+    device: str | torch.device = "cpu",
+) -> torch.Tensor:
+    """Return the Go2-X5 STAND command; its leg action is handled outside the actor."""
+    command = make_walking_command(0.0, batch_size=batch_size, device=device)
+    command[:, 4] = 0.0  # freeze the gait clock
+    command[:, 5:8] = 0.0  # repurpose the former pronk tuple as STAND
+    command[:, 8] = 1.0  # all-stance semantics
+    command[:, 9] = 0.0  # no swing in STAND
+    return command
+
+
+def make_two_state_command(
+    vx: float,
+    vy: float = 0.0,
+    wz: float = 0.0,
+    *,
+    batch_size: int = 1,
+    device: str | torch.device = "cpu",
+) -> torch.Tensor:
+    """Select STAND for zero velocity and nominal trot for any walking command."""
+    if max(abs(vx), abs(vy), abs(wz)) <= 1.0e-6:
+        return make_standing_command(batch_size=batch_size, device=device)
+    return make_walking_command(vx, vy, wz, batch_size=batch_size, device=device)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
