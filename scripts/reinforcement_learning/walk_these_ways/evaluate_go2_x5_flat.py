@@ -75,15 +75,7 @@ parser.add_argument(
     "--stand-transition-steps",
     type=int,
     default=20,
-    help="Steps used to blend the last walking action into the fixed stand pose.",
-)
-parser.add_argument(
-    "--stand-action",
-    type=float,
-    nargs=12,
-    default=None,
-    metavar=tuple(f"A{index}" for index in range(1, 13)),
-    help="Optional fixed 12-D leg action for STAND; defaults to the calibrated Go2-X5 pose.",
+    help="Steps used to blend the last walking action into the active STAND output.",
 )
 parser.add_argument("--leg-stiffness", type=float, default=40.0)
 parser.add_argument("--leg-damping", type=float, default=1.0)
@@ -172,7 +164,6 @@ from wtw_policy_adapter import (  # noqa: E402
     HISTORY_LENGTH,
     OBSERVATION_DIM,
     POLICY_DT_S,
-    STAND_ACTION,
     GRIPPER_JOINT_NAMES,
     WTW_JOINT_NAMES,
     WTWPolicyAdapter,
@@ -771,11 +762,6 @@ def main() -> None:
     stand_policy_command = make_standing_command(batch_size=1, device=raw_env.device)
     action_scales = torch.tensor(ACTION_SCALES, dtype=torch.float32, device=raw_env.device)
     q0 = torch.tensor(DEFAULT_JOINT_POS, dtype=torch.float32, device=raw_env.device)
-    stand_action = torch.tensor(
-        STAND_ACTION if args_cli.stand_action is None else args_cli.stand_action,
-        dtype=torch.float32,
-        device=raw_env.device,
-    ).unsqueeze(0)
     leg_effort_limits = robot.data.joint_effort_limits[0, leg_joint_ids]
 
     samples: list[dict[str, object]] = []
@@ -832,9 +818,9 @@ def main() -> None:
             wall_start = time.perf_counter()
             segment_time_s = (segment_step + 1) * dt
             current_arm_target = set_external_commands(segment, segment_time_s)
+            raw_action = adapter.infer_raw()
+            clipped_action = raw_action.clamp(-ACTION_CLIP, ACTION_CLIP)
             if standing_mode:
-                raw_action = torch.zeros_like(stand_entry_action)
-                clipped_action = raw_action
                 if args_cli.stand_transition_steps > 0:
                     action_scale = max(
                         0.0,
@@ -844,11 +830,9 @@ def main() -> None:
                 else:
                     action_scale = 0.0
                 applied_action = (
-                    stand_action + (stand_entry_action - stand_action) * action_scale
+                    clipped_action + (stand_entry_action - clipped_action) * action_scale
                 )
             else:
-                raw_action = adapter.infer_raw()
-                clipped_action = raw_action.clamp(-ACTION_CLIP, ACTION_CLIP)
                 if args_cli.policy_action_warmup_steps > 0:
                     action_scale = min(
                         1.0,
@@ -919,7 +903,6 @@ def main() -> None:
                 "source_deadzone_command": [deadzone_vx, deadzone_vy, segment.wz],
                 "wtw_command": policy_command[0].tolist(),
                 "controller_mode": "STAND" if standing_mode else "WALK_TROT",
-                "stand_target_action": stand_action[0].tolist(),
                 "measured_vx": float(robot.data.root_lin_vel_b[0, 0].item()),
                 "measured_vy": float(robot.data.root_lin_vel_b[0, 1].item()),
                 "measured_wz": float(robot.data.root_ang_vel_b[0, 2].item()),
@@ -1261,9 +1244,8 @@ def main() -> None:
                 "velocity_condition": "max(abs(vx), abs(vy), abs(wz)) <= 1e-6",
                 "phase_offset_bound": [0.0, 0.0, 0.0],
                 "gait_frequency_hz": 0.0,
-                "actor_bypassed": True,
-                "leg_target": "q0 + action_scale * fixed stand action",
-                "fixed_action": stand_action[0].tolist(),
+                "actor_bypassed": False,
+                "gait_clock_frozen": True,
             },
             "walk_trot": {
                 "velocity_condition": "otherwise",
@@ -1390,7 +1372,7 @@ def main() -> None:
             f"{arm_result_text}"
             f"{gripper_result_text}"
             "- 两态控制仅保留 STAND `(0,0,0)` 与 WALK_TROT `(0.5,0,0)`；"
-            "STAND 绕过 actor，并在走停切换时平滑回到 q0。\n"
+            "STAND 冻结 gait clock，但保留 actor 的主动姿态反馈。\n"
             "- walking pass 统计 command segment；stationary profile 还将 "
             "`stand_after_walk` 纳入静止专项验收。\n"
             "- 每步样本记录 computed/applied torque、逐关节饱和、逐足 force/slip/impulse、"

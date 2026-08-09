@@ -105,7 +105,6 @@ def test_contract_constants_and_two_state_commands() -> None:
         -1.5,
     )
     assert wtw.ACTION_SCALES == (0.125, 0.25, 0.25) * 4
-    assert len(wtw.STAND_ACTION) == wtw.ACTION_DIM
     assert wtw.GRIPPER_JOINT_NAMES == ("arm_joint7", "arm_joint8")
     assert wtw.DEFAULT_GRIPPER_JOINT_POS == (0.044, 0.044)
     assert command.shape == (2, wtw.COMMAND_DIM)
