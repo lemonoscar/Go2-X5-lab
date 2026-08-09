@@ -124,6 +124,7 @@ class Go2X5WTWFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
             rel_heading_envs=0.0,
             heading_command=False,
             debug_vis=False,
+            standing_probability=0.20,
             ranges=mdp.WTWWalkingVelocityCommandCfg.Ranges(
                 lin_vel_x=(-0.75, 0.75),
                 lin_vel_y=(-0.40, 0.40),
@@ -176,10 +177,8 @@ class Go2X5WTWFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
         self.curriculum.reward_weights = None
         self.curriculum.arm_command_range = None
 
-        # Walking-only shaping: keep the existing tracking/stability/contact
-        # rewards while removing terms whose signal exists only at zero command.
-        self.rewards.stand_still = None
-        self.rewards.feet_contact_without_cmd = None
+        # Preserve walking quality while giving the explicit STAND branch the
+        # inherited joint-stillness and four-foot-contact objectives.
         self.rewards.base_height_l2.params["target_height"] = 0.30
 
         # Thigh/calf contacts remain a penalty. Only clear base/arm contacts,
@@ -209,6 +208,15 @@ class Go2X5WTWFlatEnvCfg(Go2X5DogOnlyFlatEnvCfg):
             raise ValueError("WTW gripper action must preserve arm_joint7/arm_joint8 order.")
         if self.actions.gripper_joint_pos.command_name != "gripper_joint_pos":
             raise ValueError("WTW gripper action must use the fixed gripper command term.")
+        if not math.isclose(
+            self.commands.base_velocity.standing_probability,
+            0.20,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        ):
+            raise ValueError("WTW continuation must sample the STAND branch at 20%.")
+        if self.rewards.stand_still is None or self.rewards.feet_contact_without_cmd is None:
+            raise ValueError("WTW STAND training rewards must remain enabled.")
         if (
             self.commands.base_velocity is None
             or self.commands.arm_joint_pos is None

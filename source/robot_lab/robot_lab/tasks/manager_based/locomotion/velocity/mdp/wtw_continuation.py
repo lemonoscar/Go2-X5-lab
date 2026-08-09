@@ -23,6 +23,7 @@ WTW_MODE_PURE_VX = 0
 WTW_MODE_PURE_VY = 1
 WTW_MODE_PURE_YAW = 2
 WTW_MODE_MIXED = 3
+WTW_MODE_STAND = 4
 
 WTW_JOINT_NAMES = (
     "FL_hip_joint",
@@ -79,8 +80,9 @@ def validate_wtw_walking_command_spec(
     yaw_values: Sequence[float],
     category_probabilities: Sequence[float],
     min_mixed_planar_speed: float = 0.25,
+    standing_probability: float = 0.0,
 ) -> None:
-    """Validate the discrete, non-standing walking command support."""
+    """Validate the discrete trot support and its optional STAND branch."""
 
     for label, values in (("vx_values", vx_values), ("vy_values", vy_values), ("yaw_values", yaw_values)):
         if not values:
@@ -98,6 +100,8 @@ def validate_wtw_walking_command_spec(
         raise ValueError("category_probabilities must sum to 1.0.")
     if min_mixed_planar_speed <= 0.0:
         raise ValueError("min_mixed_planar_speed must be positive.")
+    if not math.isfinite(standing_probability) or not 0.0 <= standing_probability < 1.0:
+        raise ValueError("standing_probability must be finite and in [0, 1).")
 
     minimum_mixed_speed = math.hypot(
         min(abs(float(value)) for value in vx_values),
@@ -115,8 +119,9 @@ def sample_wtw_walking_commands(
     vy_values: torch.Tensor,
     yaw_values: torch.Tensor,
     category_cdf: torch.Tensor,
+    standing_probability: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Sample exact WTW walking bins and return commands plus category ids."""
+    """Sample exact WTW trot bins plus an optional all-zero STAND branch."""
 
     if count <= 0:
         raise ValueError("count must be positive.")
@@ -126,6 +131,8 @@ def sample_wtw_walking_commands(
         raise ValueError("category_cdf must have shape (4,).")
     if not (vx_values.device == vy_values.device == yaw_values.device == category_cdf.device):
         raise ValueError("all command tensors must use the same device.")
+    if not math.isfinite(standing_probability) or not 0.0 <= standing_probability < 1.0:
+        raise ValueError("standing_probability must be finite and in [0, 1).")
 
     device = vx_values.device
     commands = torch.zeros((count, 3), dtype=vx_values.dtype, device=device)
@@ -156,11 +163,16 @@ def sample_wtw_walking_commands(
         commands[mixed, 1] = vy_values[torch.randint(vy_values.numel(), (mixed_count,), device=device)]
         commands[mixed, 2] = yaw_values[torch.randint(yaw_values.numel(), (mixed_count,), device=device)]
 
+    if standing_probability > 0.0:
+        standing = torch.rand(count, device=device) < standing_probability
+        commands[standing] = 0.0
+        modes[standing] = WTW_MODE_STAND
+
     return commands, modes
 
 
 class WTWWalkingVelocityCommand(UniformVelocityCommand):
-    """Sample only in-distribution, non-standing WTW walking commands."""
+    """Sample STAND or an in-distribution nominal-trot velocity command."""
 
     cfg: "WTWWalkingVelocityCommandCfg"
 
@@ -171,6 +183,7 @@ class WTWWalkingVelocityCommand(UniformVelocityCommand):
             cfg.yaw_values,
             cfg.category_probabilities,
             cfg.min_mixed_planar_speed,
+            cfg.standing_probability,
         )
         super().__init__(cfg, env)
         self._vx_values = torch.tensor(cfg.vx_values, dtype=torch.float32, device=self.device)
@@ -185,16 +198,17 @@ class WTWWalkingVelocityCommand(UniformVelocityCommand):
         if len(env_ids) == 0:
             return
         env_ids_tensor = torch.as_tensor(env_ids, dtype=torch.long, device=self.device)
-        commands, _ = sample_wtw_walking_commands(
+        commands, modes = sample_wtw_walking_commands(
             len(env_ids_tensor),
             self._vx_values,
             self._vy_values,
             self._yaw_values,
             self._category_cdf,
+            self.cfg.standing_probability,
         )
         self.vel_command_b[env_ids_tensor] = commands
         self.is_heading_env[env_ids_tensor] = False
-        self.is_standing_env[env_ids_tensor] = False
+        self.is_standing_env[env_ids_tensor] = modes == WTW_MODE_STAND
 
 
 @configclass
@@ -207,10 +221,11 @@ class WTWWalkingVelocityCommandCfg(UniformVelocityCommandCfg):
     yaw_values: tuple[float, ...] = (-0.50, -0.30, 0.30, 0.50)
     category_probabilities: tuple[float, ...] = (0.45, 0.20, 0.20, 0.15)
     min_mixed_planar_speed: float = 0.25
+    standing_probability: float = 0.20
 
 
 def build_wtw_command(base_velocity: torch.Tensor) -> torch.Tensor:
-    """Expand a 3-D base command into the source policy's fixed 15-D trot command."""
+    """Expand base velocity into STAND or the source policy's nominal trot command."""
 
     if base_velocity.ndim != 2 or base_velocity.shape[1] != 3:
         raise ValueError(f"base_velocity must have shape (N, 3), got {tuple(base_velocity.shape)}.")
@@ -218,10 +233,12 @@ def build_wtw_command(base_velocity: torch.Tensor) -> torch.Tensor:
         (base_velocity.shape[0], WTW_COMMAND_DIM), dtype=base_velocity.dtype, device=base_velocity.device
     )
     command[:, :3] = base_velocity
-    command[:, 4] = 2.5
-    command[:, 5] = 0.5
-    command[:, 8] = 0.5
-    command[:, 9] = 0.08
+    walking = torch.any(torch.abs(base_velocity) > 1.0e-6, dim=1)
+    command[walking, 4] = 2.5
+    command[walking, 5] = 0.5
+    command[walking, 8] = 0.5
+    command[walking, 9] = 0.08
+    command[~walking, 8] = 1.0
     command[:, 12] = 0.25
     command[:, 13] = 0.40
     return command

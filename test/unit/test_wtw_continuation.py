@@ -171,6 +171,23 @@ def test_walking_sampler_preserves_exact_bins_probabilities_and_no_standing() ->
         assert torch.mean((modes == mode).float()).item() == pytest.approx(expected.item(), abs=0.012)
 
 
+def test_two_state_sampler_adds_only_exact_zero_stand_commands() -> None:
+    torch.manual_seed(32)
+    commands, modes = wtw.sample_wtw_walking_commands(
+        30000,
+        torch.tensor((-0.75, -0.50, -0.25, 0.25, 0.50, 0.75)),
+        torch.tensor((-0.40, -0.25, 0.25, 0.40)),
+        torch.tensor((-0.50, -0.30, 0.30, 0.50)),
+        torch.tensor((0.45, 0.65, 0.85, 1.0)),
+        standing_probability=0.20,
+    )
+
+    standing = modes == wtw.WTW_MODE_STAND
+    assert standing.float().mean().item() == pytest.approx(0.20, abs=0.012)
+    assert torch.all(commands[standing] == 0.0)
+    assert not torch.any(torch.all(commands[~standing] == 0.0, dim=1))
+
+
 def test_wtw_frame_is_exact_and_reset_row_is_zero() -> None:
     q0 = torch.tensor(wtw.WTW_DEFAULT_JOINT_POS).repeat(2, 1)
     joint_offset = torch.arange(wtw.WTW_ACTION_DIM, dtype=torch.float32) * 0.01
@@ -193,6 +210,7 @@ def test_wtw_frame_is_exact_and_reset_row_is_zero() -> None:
     assert frame.shape == (2, wtw.WTW_FRAME_DIM)
     assert torch.count_nonzero(frame[0]) == 0
     command = wtw.build_wtw_command(torch.tensor(((0.50, -0.25, 0.30),)))
+    stand_command = wtw.build_wtw_command(torch.zeros(1, 3))
     torch.testing.assert_close(frame[1, 0:3], torch.tensor((0.1, 0.2, -0.9)))
     torch.testing.assert_close(
         frame[1, 3:18], command[0] * torch.tensor(wtw.WTW_COMMAND_SCALES)
@@ -203,6 +221,12 @@ def test_wtw_frame_is_exact_and_reset_row_is_zero() -> None:
     torch.testing.assert_close(frame[1, 54:66], previous_action[1])
     expected_clock = torch.sin(2.0 * torch.pi * torch.tensor((0.55, 0.05, 0.05, 0.55)))
     torch.testing.assert_close(frame[1, 66:70], expected_clock)
+    torch.testing.assert_close(
+        stand_command[0],
+        torch.tensor(
+            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.25, 0.4, 0.0)
+        ),
+    )
 
 
 def test_wtw_frame_rejects_wrong_policy_period_and_clips_raw_actions() -> None:
@@ -289,6 +313,9 @@ def test_wtw_task_static_contract_and_registration_are_isolated() -> None:
     assert "self.scene.sky_light.spawn.texture_file = None" in cfg_source
     assert 'self.scene.terrain.terrain_type = "plane"' not in cfg_source
     assert "self.commands.base_velocity = mdp.WTWWalkingVelocityCommandCfg(" in cfg_source
+    assert "standing_probability=0.20" in cfg_source
+    assert "self.rewards.stand_still = None" not in cfg_source
+    assert "self.rewards.feet_contact_without_cmd = None" not in cfg_source
     assert "self.commands.arm_joint_pos.position_range = ARM_LOCKED_DEFAULT_RANGE" in cfg_source
     assert "self.commands.gripper_joint_pos = mdp.ArmJointPositionCommandCfg(" in cfg_source
     assert "joint_names=list(mdp.WTW_GRIPPER_JOINT_NAMES)" in cfg_source
