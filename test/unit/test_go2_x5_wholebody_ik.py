@@ -19,6 +19,7 @@ if "robot_lab" not in sys.modules:
 
 from robot_lab.go2_x5_wholebody.ik import (  # noqa: E402
     ARM_JOINT_NAMES,
+    PINNED_DEPENDENCIES,
     POLICY_ARM_ZERO,
     Go2X5IK,
     arm_dof_indices,
@@ -26,6 +27,17 @@ from robot_lab.go2_x5_wholebody.ik import (  # noqa: E402
 
 
 URDF = REPO_ROOT / "source" / "robot_lab" / "data" / "Robots" / "go2_x5" / "go2_x5.urdf"
+
+
+def test_dependency_drift_fails_fast() -> None:
+    versions = {**PINNED_DEPENDENCIES, "qpsolvers": "4.11.0", "quadprog": "0.1.13"}
+    with patch("robot_lab.go2_x5_wholebody.ik.metadata.version", side_effect=versions.__getitem__):
+        try:
+            Go2X5IK(str(URDF))
+        except ImportError as error:
+            assert "qpsolvers" in str(error) and "4.8.2" in str(error)
+        else:
+            raise AssertionError("dependency drift was accepted")
 
 
 def test_name_mapping_rejects_missing_and_duplicates() -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+from importlib import metadata
+import re
 import sys
 from typing import Any, Iterable, Sequence
 
@@ -12,6 +14,7 @@ import numpy as np
 
 ARM_JOINT_NAMES = tuple(f"arm_joint{index}" for index in range(1, 7))
 POLICY_ARM_ZERO = np.array([0.0, 0.8, 0.8, 0.0, 0.0, 0.0], dtype=np.float64)
+PINNED_DEPENDENCIES = {"pin": "2.7.0", "pin-pink": "3.1.0", "qpsolvers": "4.8.2"}
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,17 @@ class IKStatus:
 
 
 def _dependencies() -> tuple[Any, Any, Any, Any]:
+    actual = {name: metadata.version(name) for name in (*PINNED_DEPENDENCIES, "quadprog")}
+    mismatches = {
+        name: (expected, actual[name])
+        for name, expected in PINNED_DEPENDENCIES.items()
+        if actual[name] != expected
+    }
+    quadprog_version = tuple(int(value) for value in re.findall(r"\d+", actual["quadprog"])[:3])
+    if not (quadprog_version >= (0, 1, 12) and quadprog_version < (0, 2)):
+        mismatches["quadprog"] = (">=0.1.12,<0.2", actual["quadprog"])
+    if mismatches:
+        raise ImportError(f"Go2-X5 WholeBody IK dependency mismatch: {mismatches}")
     try:
         pin = import_module("pinocchio")
         if not hasattr(pin, "Model"):
