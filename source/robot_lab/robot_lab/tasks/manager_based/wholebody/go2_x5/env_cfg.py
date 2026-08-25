@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from isaaclab.actuators import DCMotorCfg
+import isaaclab.sim as sim_utils
+from isaaclab.actuators import DCMotorCfg, ImplicitActuatorCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.utils import configclass
 
 from isaaclab.envs import mdp as core_mdp
 
+from robot_lab.assets import ISAACLAB_ASSETS_DATA_DIR
 from robot_lab.go2_x5_wholebody.controller import (
     ARM_JOINT_NAMES,
     ARM_POLICY_ZERO,
@@ -58,6 +60,8 @@ class Go2X5WholeBodyEnvCfg(Go2X5WTWFlatEnvCfg):
         self.scene.contact_forces.update_period = self.sim.dt
         self.sim.physx.gpu_max_rigid_contact_count = 2**20
         self.sim.physx.gpu_max_rigid_patch_count = 5 * 2**12
+        self.sim.physx.solver_type = 1
+        self.sim.physx.bounce_threshold_velocity = 0.5
 
         joint_pos = dict(self.scene.robot.init_state.joint_pos)
         joint_pos.update(dict(zip(DOG_JOINT_NAMES, DOG_DEFAULT_JOINT_POS, strict=True)))
@@ -67,8 +71,22 @@ class Go2X5WholeBodyEnvCfg(Go2X5WTWFlatEnvCfg):
             pos=(0.0, 0.0, 0.34), joint_pos=joint_pos
         )
         self.scene.robot.soft_joint_pos_limit_factor = 1.0
+        self.scene.robot.spawn.usd_path = (
+            f"{ISAACLAB_ASSETS_DATA_DIR}/Robots/go2_x5/wholebody/go2_x5_wholebody.usd"
+        )
         self.scene.robot.spawn.articulation_props.enabled_self_collisions = True
         self.scene.robot.spawn.articulation_props.solver_position_iteration_count = 8
+        self.scene.robot.spawn.articulation_props.solver_velocity_iteration_count = 1
+        self.scene.robot.spawn.rigid_props.max_depenetration_velocity = 1.0
+        self.scene.robot.spawn.physics_material = sim_utils.RigidBodyMaterialCfg(
+            friction_combine_mode="multiply",
+            restitution_combine_mode="multiply",
+            static_friction=1.0,
+            dynamic_friction=1.0,
+            restitution=0.0,
+        )
+        self.scene.terrain.physics_material.restitution = 0.0
+        self.sim.physics_material = self.scene.terrain.physics_material
         self.scene.robot.actuators = {
             "legs_hip_thigh": DCMotorCfg(
                 joint_names_expr=[".*_hip_joint", ".*_thigh_joint"],
@@ -92,20 +110,23 @@ class Go2X5WholeBodyEnvCfg(Go2X5WTWFlatEnvCfg):
                 damping=1.0,
                 friction=0.0,
             ),
-            "arm_joint1": DCMotorCfg(
-                joint_names_expr=["arm_joint1"], effort_limit=30.0, effort_limit_sim=30.0,
-                saturation_effort=30.0, velocity_limit=10.0, velocity_limit_sim=10.0,
-                stiffness=40.0, damping=3.0, friction=0.0,
-            ),
-            "arm_joint23": DCMotorCfg(
-                joint_names_expr=["arm_joint2", "arm_joint3"], effort_limit=30.0,
-                effort_limit_sim=30.0, saturation_effort=30.0, velocity_limit=10.0,
-                velocity_limit_sim=10.0, stiffness=70.0, damping=15.0, friction=0.0,
-            ),
-            "arm_joint456": DCMotorCfg(
-                joint_names_expr=["arm_joint4", "arm_joint5", "arm_joint6"], effort_limit=30.0,
-                effort_limit_sim=30.0, saturation_effort=30.0, velocity_limit=10.0,
-                velocity_limit_sim=10.0, stiffness=25.0, damping=2.0, friction=0.0,
+            "arm_ik": ImplicitActuatorCfg(
+                joint_names_expr=list(ARM_JOINT_NAMES),
+                effort_limit_sim=dict(
+                    zip(ARM_JOINT_NAMES, (20.0, 20.0, 15.0, 7.0, 5.0, 5.0), strict=True)
+                ),
+                velocity_limit_sim=3.0,
+                stiffness=dict(
+                    zip(
+                        ARM_JOINT_NAMES,
+                        (10000.0, 10000.0, 10000.0, 4000.0, 2000.0, 1000.0),
+                        strict=True,
+                    )
+                ),
+                damping=dict(
+                    zip(ARM_JOINT_NAMES, (140.0, 140.0, 140.0, 70.0, 42.0, 28.0), strict=True)
+                ),
+                friction=0.0,
             ),
             "gripper": DCMotorCfg(
                 joint_names_expr=["arm_joint7", "arm_joint8"], effort_limit=20.0,

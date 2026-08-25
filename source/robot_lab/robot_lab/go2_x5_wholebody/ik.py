@@ -145,22 +145,31 @@ class Go2X5IK:
             raise ValueError("URDF is missing official arm_eef_link frame")
 
         reference = self.pin.neutral(full_model)
-        for name, value in zip(ARM_JOINT_NAMES, self.policy_zero, strict=True):
-            joint = full_model.joints[full_model.getJointId(name)]
+        arm_joint_ids = tuple(full_model.getJointId(name) for name in ARM_JOINT_NAMES)
+        for name, joint_id, value in zip(ARM_JOINT_NAMES, arm_joint_ids, self.policy_zero, strict=True):
+            joint = full_model.joints[joint_id]
             if joint.nq != 1 or joint.nv != 1:
                 raise ValueError(f"{name} must be scalar, got nq={joint.nq}, nv={joint.nv}")
             reference[joint.idx_q] = value
-        keep = set(ARM_JOINT_NAMES)
-        locked = [joint_id for joint_id, name in enumerate(full_model.names) if joint_id and name not in keep]
+        locked = [joint_id for joint_id in range(1, full_model.njoints) if joint_id not in arm_joint_ids]
         self.model = self.pin.buildReducedModel(full_model, locked, reference)
-        if tuple(self.model.names[1:]) != ARM_JOINT_NAMES or self.model.nq != 6 or self.model.nv != 6:
+        reduced_joint_ids = tuple(self.model.getJointId(name) for name in ARM_JOINT_NAMES)
+        if (
+            reduced_joint_ids != tuple(range(1, 7))
+            or self.model.njoints != 7
+            or self.model.nq != 6
+            or self.model.nv != 6
+        ):
             raise ValueError(
-                f"reduced IK mapping mismatch: names={list(self.model.names)}, "
-                f"nq={self.model.nq}, nv={self.model.nv}"
+                f"reduced IK mapping mismatch: joint_ids={reduced_joint_ids}, "
+                f"njoints={self.model.njoints}, nq={self.model.nq}, nv={self.model.nv}"
             )
         if self.model.getFrameId("arm_eef_link") >= self.model.nframes:
             raise ValueError("arm_eef_link disappeared from reduced URDF model")
 
+        # Isaac Sim registers an incompatible std::vector<bool> converter. All
+        # joints in this reduced model are finite, scalar revolute joints.
+        self.model.hasConfigurationLimit = lambda: np.ones(self.model.nq, dtype=bool)
         self.model.velocityLimit[:] = velocity_limit
         self.data = self.model.createData()
         self.frame_task = FrameTask(

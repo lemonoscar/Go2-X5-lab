@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+import numpy as np
 import torch
 
 from isaaclab.assets.articulation import Articulation
@@ -81,6 +82,13 @@ class Go2X5WholeBodyAction(ActionTerm):
         self._arm_ids = _unique_joint_ids(self._asset, ARM_JOINT_NAMES)
         self._gripper_ids = _unique_joint_ids(self._asset, GRIPPER_JOINT_NAMES)
         self._joint_ids = self._dog_ids + self._arm_ids + self._gripper_ids
+        arm_link6_ids, arm_link6_names = self._asset.find_bodies(["arm_link6"], preserve_order=True)
+        if arm_link6_names != ["arm_link6"] or len(arm_link6_ids) != 1:
+            raise ValueError(
+                "Go2-X5 end-effector mapping mismatch: "
+                f"requested=arm_link6, resolved={arm_link6_names}, ids={arm_link6_ids}"
+            )
+        self._arm_link6_id = int(arm_link6_ids[0])
         _exclude_overlapping_finger_pair()
         self._contact_sensor = env.scene["contact_forces"]
         self._nonfoot_body_ids = [
@@ -110,6 +118,7 @@ class Go2X5WholeBodyAction(ActionTerm):
         default_targets = self._asset.data.default_joint_pos[:, self._joint_ids]
         self._joint_targets = default_targets.clone()
         self._last_output = None
+        self._fk_alignment: tuple[float, float] | None = None
         self._diagnostics: dict[str, Any] = {}
 
     @property
@@ -129,7 +138,40 @@ class Go2X5WholeBodyAction(ActionTerm):
         return self._diagnostics
 
     def _validate_articulation(self, manifest: dict[str, Any]) -> None:
-        expected_limits = manifest["runtime"]["joint_limits"]
+        runtime = manifest["runtime"]
+        expected_limits = runtime["joint_limits"]
+        ik_drive = runtime["ik_position_drive"]
+        physics = runtime["physics"]
+        configured_physics = {
+            "solver_type": "TGS" if self._env.cfg.sim.physx.solver_type == 1 else "PGS",
+            "solver_position_iterations": (
+                self._asset.cfg.spawn.articulation_props.solver_position_iteration_count
+            ),
+            "solver_velocity_iterations": (
+                self._asset.cfg.spawn.articulation_props.solver_velocity_iteration_count
+            ),
+            "bounce_threshold_velocity_m_s": self._env.cfg.sim.physx.bounce_threshold_velocity,
+            "max_depenetration_velocity_m_s": (
+                self._asset.cfg.spawn.rigid_props.max_depenetration_velocity
+            ),
+        }
+        for name, actual in configured_physics.items():
+            expected = physics[name]
+            if actual != expected:
+                raise ValueError(
+                    f"WholeBody configured physics mismatch for {name}: "
+                    f"expected {expected!r}, got {actual!r}"
+                )
+        if self._env.cfg.sim.dt != runtime["sim_dt"] or self._env.cfg.decimation != runtime["decimation"]:
+            raise ValueError(
+                "WholeBody configured timing mismatch: "
+                f"expected dt={runtime['sim_dt']} decimation={runtime['decimation']}, "
+                f"got dt={self._env.cfg.sim.dt} decimation={self._env.cfg.decimation}"
+            )
+        expected_effort = list(expected_limits["effort"])
+        expected_effort[12:18] = ik_drive["effort"]
+        expected_velocity = list(expected_limits["velocity"])
+        expected_velocity[12:18] = [ik_drive["velocity"]] * 6
         checks = (
             (
                 "position",
@@ -143,13 +185,13 @@ class Go2X5WholeBodyAction(ActionTerm):
             (
                 "effort",
                 self._asset.data.joint_effort_limits[0, self._joint_ids],
-                torch.tensor(expected_limits["effort"], device=self.device),
+                torch.tensor(expected_effort, device=self.device),
                 1.0e-3,
             ),
             (
                 "velocity",
                 self._asset.data.joint_vel_limits[0, self._joint_ids],
-                torch.tensor(expected_limits["velocity"], device=self.device),
+                torch.tensor(expected_velocity, device=self.device),
                 1.0e-3,
             ),
         )
@@ -161,20 +203,16 @@ class Go2X5WholeBodyAction(ActionTerm):
                     f"expected {expected.tolist()}, got {actual.tolist()}"
                 )
 
-        pd = manifest["runtime"]["pd"]
+        pd = runtime["pd"]
         expected_stiffness = torch.tensor(
             [pd["legs"]["stiffness"]] * 12
-            + [pd["arm_joint1"]["stiffness"]]
-            + [pd["arm_joint2_3"]["stiffness"]] * 2
-            + [pd["arm_joint4_6"]["stiffness"]] * 3
+            + ik_drive["stiffness"]
             + [pd["gripper"]["stiffness"]] * 2,
             device=self.device,
         )
         expected_damping = torch.tensor(
             [pd["legs"]["damping"]] * 12
-            + [pd["arm_joint1"]["damping"]]
-            + [pd["arm_joint2_3"]["damping"]] * 2
-            + [pd["arm_joint4_6"]["damping"]] * 3
+            + ik_drive["damping"]
             + [pd["gripper"]["damping"]] * 2,
             device=self.device,
         )
@@ -235,6 +273,58 @@ class Go2X5WholeBodyAction(ActionTerm):
                 f"got {whole_com_b.tolist()} (error {com_error:.6f} m)"
             )
 
+        env_ids = torch.arange(self.num_envs, device="cpu")
+        contact_offsets = self._asset.root_physx_view.get_contact_offsets().clone()
+        contact_offsets.fill_(physics["contact_offset_m"])
+        self._asset.root_physx_view.set_contact_offsets(contact_offsets, env_ids)
+        rest_offsets = self._asset.root_physx_view.get_rest_offsets().clone()
+        rest_offsets.fill_(physics["rest_offset_m"])
+        self._asset.root_physx_view.set_rest_offsets(rest_offsets, env_ids)
+        materials = self._asset.root_physx_view.get_material_properties().clone()
+        materials[:, :, 0].fill_(physics["static_friction"])
+        materials[:, :, 1].fill_(physics["dynamic_friction"])
+        materials[:, :, 2].fill_(physics["restitution"])
+        self._asset.root_physx_view.set_material_properties(materials, env_ids)
+
+        contact_offsets = self._asset.root_physx_view.get_contact_offsets()[0]
+        rest_offsets = self._asset.root_physx_view.get_rest_offsets()[0]
+        materials = self._asset.root_physx_view.get_material_properties()[0]
+        physics_checks = (
+            ("contact offsets", contact_offsets, physics["contact_offset_m"]),
+            ("rest offsets", rest_offsets, physics["rest_offset_m"]),
+            ("static friction", materials[:, 0], physics["static_friction"]),
+            ("dynamic friction", materials[:, 1], physics["dynamic_friction"]),
+            ("restitution", materials[:, 2], physics["restitution"]),
+        )
+        for label, actual, expected in physics_checks:
+            if not torch.allclose(actual, torch.full_like(actual, expected), atol=1.0e-6, rtol=0.0):
+                raise ValueError(
+                    f"WholeBody live {label} mismatch: expected {expected}, "
+                    f"got range [{actual.min().item()}, {actual.max().item()}]"
+                )
+        self._physics_diagnostics = {
+            "contact_offset_range_m": (
+                float(contact_offsets.min().item()),
+                float(contact_offsets.max().item()),
+            ),
+            "rest_offset_range_m": (
+                float(rest_offsets.min().item()),
+                float(rest_offsets.max().item()),
+            ),
+            "static_friction_range": (
+                float(materials[:, 0].min().item()),
+                float(materials[:, 0].max().item()),
+            ),
+            "dynamic_friction_range": (
+                float(materials[:, 1].min().item()),
+                float(materials[:, 1].max().item()),
+            ),
+            "restitution_range": (
+                float(materials[:, 2].min().item()),
+                float(materials[:, 2].max().item()),
+            ),
+        }
+
     def _robot_state(self) -> RobotState:
         root_quat_wxyz = self._asset.data.root_quat_w
         roll, pitch, _ = euler_xyz_from_quat(root_quat_wxyz)
@@ -250,10 +340,52 @@ class Go2X5WholeBodyAction(ActionTerm):
             ground_height_world=self._env.scene.env_origins[:, 2],
         )
 
+    def _validate_simulator_fk(self, state: RobotState) -> None:
+        """Match RoboDuet's fail-fast Pinocchio/Isaac end-effector check."""
+        ik = self._controller.ik
+        measured_q = state.arm_joint_pos[0].detach().cpu().numpy().astype(np.float64, copy=True)
+        pin_pose = ik.forward_kinematics(measured_q)
+
+        def rotation_wxyz(quaternion: torch.Tensor) -> np.ndarray:
+            w, x, y, z = quaternion.detach().cpu().numpy().astype(np.float64, copy=True)
+            return ik.pin.Quaternion(w, x, y, z).normalized().matrix()
+
+        base_position = self._asset.data.root_pos_w[0].detach().cpu().numpy().astype(np.float64)
+        rotation_world_base = rotation_wxyz(self._asset.data.root_quat_w[0])
+        link6_position = (
+            self._asset.data.body_pos_w[0, self._arm_link6_id]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float64)
+        )
+        rotation_world_link6 = rotation_wxyz(
+            self._asset.data.body_quat_w[0, self._arm_link6_id]
+        )
+        eef_position = link6_position + rotation_world_link6 @ np.array([0.08657, 0.0, 0.0])
+        sim_position_base = rotation_world_base.T @ (eef_position - base_position)
+        sim_rotation_base = rotation_world_base.T @ rotation_world_link6
+
+        position_error = float(np.linalg.norm(sim_position_base - pin_pose.translation))
+        orientation_error = float(np.linalg.norm(ik.pin.log3(pin_pose.rotation.T @ sim_rotation_base)))
+        if position_error > 0.005 or orientation_error > np.deg2rad(1.0):
+            raise ValueError(
+                "Pinocchio/Isaac Lab end-effector mapping mismatch: "
+                f"position={position_error:.6f}m "
+                f"orientation={np.rad2deg(orientation_error):.4f}deg"
+            )
+        self._fk_alignment = (position_error, orientation_error)
+
     def process_actions(self, actions: torch.Tensor) -> None:
         self._raw_actions.copy_(actions)
+        state = self._robot_state()
+        if self._fk_alignment is None:
+            self._validate_simulator_fk(state)
+        arm_tracking_error = torch.max(
+            torch.abs(state.arm_joint_pos - self._joint_targets[:, 12:18])
+        ).item()
         started = time.perf_counter()
-        output = self._controller.step(actions, self._robot_state())
+        output = self._controller.step(actions, state)
         controller_time_ms = 1000.0 * (time.perf_counter() - started)
         self._processed_actions.copy_(output.command.applied.to(self.device))
         self._joint_targets = torch.cat(
@@ -280,12 +412,21 @@ class Go2X5WholeBodyAction(ActionTerm):
             "command_rejected": output.command.rejected,
             "command_message": output.command.message,
             "clipped_mask": output.command.clipped_mask.to(self.device),
+            "ik_solver_ok": bool(status.solver_ok),
             "ik_hold": bool(status.held),
+            "ik_message": status.message,
             "stalled": bool(status.stalled),
             "ik_position_error_m": float(status.position_error_m),
             "ik_orientation_error_rad": float(status.orientation_error_rad),
             "ik_command_position_error_m": float(status.command_position_error_m),
             "ik_command_orientation_error_rad": float(status.command_orientation_error_rad),
+            "arm_tracking_error_rad": float(arm_tracking_error),
+            "fk_position_error_m": self._fk_alignment[0],
+            "fk_orientation_error_rad": self._fk_alignment[1],
+            **self._physics_diagnostics,
+            "body_plan_rad": output.body_plan.to(self.device),
+            "base_height_m": float(state.base_position_world[0, 2].item()),
+            "base_roll_pitch_rad": state.base_roll_pitch.to(self.device),
             "fallen": fallen,
             "contact": max_nonfoot_contact_n >= 25.0,
             "max_nonfoot_contact_n": max_nonfoot_contact_n,

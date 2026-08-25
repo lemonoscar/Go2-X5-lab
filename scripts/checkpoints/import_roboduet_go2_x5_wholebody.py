@@ -141,10 +141,22 @@ def _manifest(dog: Path, arm: Path, parameters: Path, source_run_id: str) -> dic
             "observation_clip": 100.0,
             "action_clip": 10.0,
             "urdf_sha256": URDF_SHA256,
+            "physics": {
+                "solver_type": "TGS",
+                "solver_position_iterations": 8,
+                "solver_velocity_iterations": 1,
+                "contact_offset_m": 0.01,
+                "rest_offset_m": 0.0,
+                "bounce_threshold_velocity_m_s": 0.5,
+                "max_depenetration_velocity_m_s": 1.0,
+                "static_friction": 1.0,
+                "dynamic_friction": 1.0,
+                "restitution": 0.0,
+            },
             "asset": {
-                "total_mass_kg": 19.5413,
+                "total_mass_kg": 20.076596,
                 "mass_tolerance_kg": 0.01,
-                "whole_body_com_base_m": [0.01747, 0.0000125, 0.03329],
+                "whole_body_com_base_m": [0.02587665, -0.000253943, 0.022855602],
                 "com_tolerance_m": 0.005,
             },
             "gait": {
@@ -167,6 +179,13 @@ def _manifest(dog: Path, arm: Path, parameters: Path, source_run_id: str) -> dic
                 "arm_joint2_3": {"stiffness": 70.0, "damping": 15.0},
                 "arm_joint4_6": {"stiffness": 25.0, "damping": 2.0},
                 "gripper": {"stiffness": 50.0, "damping": 20.0, "friction": 0.05},
+            },
+            "ik_position_drive": {
+                "profile": "roboduet_go2_x5_ik_v1",
+                "stiffness": [10000.0, 10000.0, 10000.0, 4000.0, 2000.0, 1000.0],
+                "damping": [140.0, 140.0, 140.0, 70.0, 42.0, 28.0],
+                "effort": [20.0, 20.0, 15.0, 7.0, 5.0, 5.0],
+                "velocity": 3.0,
             },
             "tcp": {
                 "public_frame": "arm_eef_link",

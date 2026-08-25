@@ -59,7 +59,8 @@ def main() -> None:
         env.reset()
         term = raw_env.action_manager.get_term("whole_body")
         action = term.processed_actions.clone()
-        for _ in range(args_cli.steps):
+        high_contact_steps = 0
+        for step in range(1, args_cli.steps + 1):
             observations, rewards, terminated, truncated, _ = env.step(action)
             if not torch.isfinite(observations["policy"]).all():
                 raise FloatingPointError("WholeBody smoke produced non-finite policy observations")
@@ -69,10 +70,22 @@ def main() -> None:
                 raise AssertionError("WholeBody smoke reset unexpectedly")
             if not torch.isfinite(raw_env.scene["robot"].data.joint_pos_target).all():
                 raise FloatingPointError("WholeBody smoke produced non-finite joint targets")
+            high_contact_steps = high_contact_steps + 1 if term.diagnostics["contact"] else 0
+            failure = None
+            if not term.diagnostics["ik_solver_ok"] or term.diagnostics["ik_hold"]:
+                failure = "IK solver entered hold mode"
+            elif term.diagnostics["fallen"]:
+                failure = "controller became physically unstable"
+            elif high_contact_steps >= 25:
+                failure = "non-foot contact exceeded 25 N for 0.5 s"
+            if failure is not None:
+                print(f"FAIL step={step} diagnostics={term.diagnostics}", flush=True)
+                raise AssertionError(f"WholeBody smoke {failure} at step {step}")
 
         print(
             f"PASS task={TASK_ID} envs=1 action_dim=10 step_dt={raw_env.step_dt} "
-            f"steps={args_cli.steps} diagnostics={term.diagnostics}"
+            f"steps={args_cli.steps} diagnostics={term.diagnostics}",
+            flush=True,
         )
     finally:
         env.close()
