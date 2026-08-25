@@ -1,0 +1,208 @@
+schema_version: 1
+policy:
+  name: Go2-x5-wholebody
+  checkpoint_iteration: 19999
+source:
+  run_id: dummy-w11894zo_seed5806
+  network_commit: fe16a0666648de22ec1e2c57f94ec759b8587553
+  ik_commit: 2e86749d86ee4150073197fab7d2e5d56f8c07e7
+  runtime_profile_commit: f22cea50351fb15c2c2f84e4ca9a906a0a4e1c5c
+  parameters_sha256: 4ddc9345a436ef9511520af1c7360a44f7d9c6ccdd760083460e88009978afb0
+  trusted_pickle_import_only: true
+network:
+  dog:
+    observation_dim: 56
+    history_length: 30
+    history_dim: 1680
+    privileged_dim: 2
+    actor_input_dim: 1682
+    action_dim: 12
+  arm:
+    observation_dim: 20
+    history_length: 30
+    history_dim: 600
+    privileged_dim: 9
+    old_history_dim: 580
+    old_history_latent_dim: 128
+    actor_input_dim: 157
+    action_dim: 8
+  observe_vel: false
+  observe_clock_inputs: true
+  observe_two_prev_actions: false
+  use_rot6d: false
+  inference_arm_body_plan_tanh: false
+runtime:
+  profile: go2_x5_joint40k_pd40_v1
+  control_dt: 0.02
+  sim_dt: 0.005
+  decimation: 4
+  num_envs: 1
+  action_dim: 10
+  observation_clip: 100.0
+  action_clip: 10.0
+  urdf_sha256: 8947e24c4c7e3c8074fe7b727c68d0addbc4ca376bce2bf05261573681ce7807
+  asset:
+    total_mass_kg: 19.5413
+    mass_tolerance_kg: 0.01
+    whole_body_com_base_m:
+    - 0.01747
+    - 1.25e-05
+    - 0.03329
+    com_tolerance_m: 0.005
+  gait:
+    frequency_hz: 3.0
+    phase: 0.5
+    offset: 0.0
+    bound: 0.0
+    duty: 0.5
+    stand_threshold: 0.1
+  action_scales:
+    hip: 0.125
+    thigh: 0.25
+    calf: 0.25
+    arm: 0.5
+  pd:
+    legs:
+      stiffness: 40.0
+      damping: 1.0
+    arm_joint1:
+      stiffness: 40.0
+      damping: 3.0
+    arm_joint2_3:
+      stiffness: 70.0
+      damping: 15.0
+    arm_joint4_6:
+      stiffness: 25.0
+      damping: 2.0
+    gripper:
+      stiffness: 50.0
+      damping: 20.0
+      friction: 0.05
+  tcp:
+    public_frame: arm_eef_link
+    legacy_training_point_m: 0.1
+    urdf_eef_offset_m: 0.08657
+    ground_z_offset_m: 0.38
+  joint_names:
+    dog:
+    - FL_hip_joint
+    - FL_thigh_joint
+    - FL_calf_joint
+    - FR_hip_joint
+    - FR_thigh_joint
+    - FR_calf_joint
+    - RL_hip_joint
+    - RL_thigh_joint
+    - RL_calf_joint
+    - RR_hip_joint
+    - RR_thigh_joint
+    - RR_calf_joint
+    arm:
+    - arm_joint1
+    - arm_joint2
+    - arm_joint3
+    - arm_joint4
+    - arm_joint5
+    - arm_joint6
+    gripper:
+    - arm_joint7
+    - arm_joint8
+  joint_limits:
+    lower:
+    - -1.0472
+    - -1.5708
+    - -2.7227
+    - -1.0472
+    - -1.5708
+    - -2.7227
+    - -1.0472
+    - -0.5236
+    - -2.7227
+    - -1.0472
+    - -0.5236
+    - -2.7227
+    - -3.14159265359
+    - 0.0
+    - 0.0
+    - -1.57079632679
+    - -1.57079632679
+    - -1.57079632679
+    - 0.0
+    - 0.0
+    upper:
+    - 1.0472
+    - 3.4907
+    - -0.83776
+    - 1.0472
+    - 3.4907
+    - -0.83776
+    - 1.0472
+    - 4.5379
+    - -0.83776
+    - 1.0472
+    - 4.5379
+    - -0.83776
+    - 3.14159265359
+    - 3.66519
+    - 3.14159265359
+    - 1.57079632679
+    - 1.57079632679
+    - 1.57079632679
+    - 0.044
+    - 0.044
+    effort:
+    - 23.7
+    - 23.7
+    - 45.43
+    - 23.7
+    - 23.7
+    - 45.43
+    - 23.7
+    - 23.7
+    - 45.43
+    - 23.7
+    - 23.7
+    - 45.43
+    - 30.0
+    - 30.0
+    - 30.0
+    - 30.0
+    - 30.0
+    - 30.0
+    - 20.0
+    - 20.0
+    velocity:
+    - 30.1
+    - 30.1
+    - 15.7
+    - 30.1
+    - 30.1
+    - 15.7
+    - 30.1
+    - 30.1
+    - 15.7
+    - 30.1
+    - 30.1
+    - 15.7
+    - 10.0
+    - 10.0
+    - 10.0
+    - 10.0
+    - 10.0
+    - 10.0
+    - 1.0
+    - 1.0
+artifacts:
+  dog:
+    relative_path: checkpoints_dog/ac_weights_019999.pt
+    sha256: 440871971895097f2e39bdd30912efc3832311a0ed274a7a82fd2aa0773c20cc
+    size_bytes: 10076319
+  arm:
+    relative_path: checkpoints_arm/ac_weights_019999.pt
+    sha256: 3d4c06c713d9ea1b2b3ae5aba135163cd6d8a0544236f2f30dc389b927604e6e
+    size_bytes: 6423667
+dependencies:
+  pin: 2.7.0
+  pin-pink: 3.1.0
+  qpsolvers: 4.8.2
+  quadprog: '>=0.1.12,<0.2'

@@ -26,6 +26,14 @@ EXTRAS_REQUIRE = {
     # Keeping it out of install_requires avoids upgrading shared Isaac Sim deps
     # such as wrapt in environments that only use the RSL-RL workflow.
     "cusrl": ["cusrl[all]"],
+    # Single-environment RoboDuet-compatible Cartesian IK inference.
+    "wholebody-ik": [
+        "PyYAML>=6,<7",
+        "pin==2.7.0",
+        "pin-pink==3.1.0",
+        "qpsolvers==4.8.2",
+        "quadprog>=0.1.12,<0.2",
+    ],
 }
 
 # Installation operation
