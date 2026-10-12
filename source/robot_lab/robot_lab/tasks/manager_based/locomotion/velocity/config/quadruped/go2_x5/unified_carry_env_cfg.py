@@ -29,7 +29,7 @@ class UnifiedCarryFlatEnvCfg(Go2X5DogOnlyRoughEnvCfg):
         self.scene.terrain.max_init_terrain_level = None
         # Headless physics must not wait for remote HDR/MDL visual downloads.
         self.scene.terrain.visual_material = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.35, 0.35, 0.35))
-        self.scene.light.spawn.texture_file = None
+        self.scene.sky_light.spawn.texture_file = None
         self.curriculum.terrain_levels = None
         self.curriculum.command_levels_lin_vel = None
         self.curriculum.command_levels_ang_vel = None
