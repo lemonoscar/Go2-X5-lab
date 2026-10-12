@@ -1,6 +1,7 @@
 """New 26000 continuation tasks. Original DogOnly task contracts stay intact."""
 from isaaclab.managers import ObservationTermCfg as ObsTerm, RewardTermCfg as RewTerm
 from isaaclab.utils import configclass
+import isaaclab.sim as sim_utils
 
 from robot_lab.tasks.manager_based.locomotion.velocity.mdp.unified_carry import (
     UnifiedArmCommandCfg, UnifiedVelocityCommandCfg, four_beat_reward,
@@ -26,6 +27,9 @@ class UnifiedCarryFlatEnvCfg(Go2X5DogOnlyRoughEnvCfg):
         self.scene.terrain.terrain_type = 'plane'
         self.scene.terrain.terrain_generator = None
         self.scene.terrain.max_init_terrain_level = None
+        # Headless physics must not wait for remote HDR/MDL visual downloads.
+        self.scene.terrain.visual_material = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.35, 0.35, 0.35))
+        self.scene.light.spawn.texture_file = None
         self.curriculum.terrain_levels = None
         self.curriculum.command_levels_lin_vel = None
         self.curriculum.command_levels_ang_vel = None
