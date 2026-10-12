@@ -38,7 +38,8 @@ class UnifiedCarryFlatEnvCfg(Go2X5DogOnlyRoughEnvCfg):
         self.episode_length_s = 70.0
         self.commands.base_velocity = UnifiedVelocityCommandCfg(
             asset_name='robot', joint_names=self.joint_names,
-            resampling_time_range=(5.0, 8.0), rel_standing_envs=0.35,
+            # Equal dwell avoids 65s standing vs 6s walking dominating rollouts.
+            resampling_time_range=(65.0, 65.0), rel_standing_envs=0.35,
             rel_heading_envs=0.0, heading_command=False, debug_vis=False,
             ranges=UnifiedVelocityCommandCfg.Ranges(
                 lin_vel_x=(-0.5, 0.75), lin_vel_y=(-0.2, 0.2), ang_vel_z=(-0.3, 0.3)))

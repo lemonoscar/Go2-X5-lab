@@ -18,6 +18,7 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
         self.anchor = torch.zeros(self.num_envs, 3, device=self.device)
         self.yaw_anchor = self.phase.clone()
         self.was_standing = torch.zeros_like(self.is_standing_env)
+        self.motion_released = torch.zeros_like(self.is_standing_env)
         self.history = ShortHistory(self.num_envs, self.device)
         self.joint_ids = self.robot.find_joints(cfg.joint_names, preserve_order=True)[0]
         self.arm_ids = self.robot.find_joints([f'arm_joint{i}' for i in range(1, 7)], preserve_order=True)[0]
@@ -27,6 +28,7 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
     def reset(self, env_ids=None):
         ids = slice(None) if env_ids is None else env_ids
         self.was_standing[ids] = False
+        self.motion_released[ids] = False
         self.phase[ids] = 0
         self.history.reset(ids)
         return super().reset(env_ids)
@@ -54,10 +56,18 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
         q = self.robot.data.joint_pos[:, self.arm_ids]
         q0 = self.robot.data.default_joint_pos[:, self.arm_ids]
         arm = self._env.command_manager.get_term('arm_joint_pos')
-        ready = ((q - q0).abs().amax(-1) < 0.06) & ((arm.command - q0).abs().amax(-1) < 0.03)
+        error = (q - q0).abs().amax(-1)
+        target_ready = (arm.command - q0).abs().amax(-1) < 0.03
+        # Measured baseline static PD error is 0.05--0.069 rad. A 0.06 gate
+        # permanently suppressed valid walking commands. Use measured tolerance
+        # and hysteresis, so normal tracking ripple does not flicker the mode.
+        ready = (error < self.cfg.stow_tolerance) & target_ready
+        ready &= self.robot.data.joint_vel[:, self.arm_ids].abs().amax(-1) < 0.15
+        self.motion_released |= ready
+        self.motion_released &= (self.requested != 0).any(-1) & target_ready & (error < 0.20)
         self.metrics['arm_stow_error'].copy_((q-q0).abs().amax(-1))
-        self.metrics['waiting_for_stow'].copy_(((self.requested != 0).any(-1) & ~ready).float())
-        self.vel_command_b[~ready] = 0
+        self.metrics['waiting_for_stow'].copy_(((self.requested != 0).any(-1) & ~self.motion_released).float())
+        self.vel_command_b[~self.motion_released] = 0
         standing = (self.vel_command_b == 0).all(-1)
         entered = standing & ~self.was_standing
         self.anchor[entered] = self.robot.data.root_pos_w[entered]
@@ -73,6 +83,7 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
 class UnifiedVelocityCommandCfg(UniformVelocityCommandCfg):
     class_type: type = UnifiedVelocityCommand
     standing_seconds: float = 65.0
+    stow_tolerance: float = 0.10
     joint_names: list[str] = []
 
 
