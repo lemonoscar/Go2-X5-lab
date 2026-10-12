@@ -37,9 +37,12 @@ class ShortHistory:
         self.valid[ids] = False
 
     def update(self, frame, step):
+        # reset() can be followed by a second observation read in the same step.
+        missing = ~self.valid
+        self.frames[missing] = frame[missing, None, :]
+        self.output[missing] = self.frames[missing].flatten(1)
+        self.valid[:] = True
         if self.last_step != step:
-            self.frames[~self.valid] = frame[~self.valid, None, :]
-            self.valid[:] = True
             self.output.copy_(self.frames.flatten(1))
             self.frames[:, :-1] = self.frames[:, 1:].clone()
             self.frames[:, -1] = frame

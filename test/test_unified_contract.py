@@ -39,6 +39,8 @@ def main():
     h.reset(torch.tensor([0]))
     out = h.update(f*4, 3).reshape(2,4,54)
     assert (out[0] == 4).all() and (out[1,-1] == 3).all()
+    h.reset(torch.tensor([0]))
+    assert (h.update(f*7, 3).reshape(2,4,54)[0] == 7).all()
     print('PASS: dead zones, signed limits, budget, idempotence, nonfinite rejection, history ordering and partial reset')
 
 

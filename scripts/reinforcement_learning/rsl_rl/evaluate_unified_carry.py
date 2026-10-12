@@ -26,6 +26,7 @@ def main():
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=False)
     cfg = parse_env_cfg(args.task, device=args.device, num_envs=args.num_envs)
+    cfg.seed = 42
     cfg.observations.policy.enable_corruption = False
     cfg.episode_length_s = args.seconds + 10
     cfg.commands.base_velocity.resampling_time_range = (10000., 10000.)
