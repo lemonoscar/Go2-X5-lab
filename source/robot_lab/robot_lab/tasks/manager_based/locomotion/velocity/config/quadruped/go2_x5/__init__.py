@@ -661,3 +661,18 @@ gym.register(
         "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:Go2X5ArmWarmupRoughTrainerCfg",
     },
 )
+
+# Isolated 26000 continuation; original task IDs and checkpoint ABI are unchanged.
+for _suffix, _cfg in (
+    ('UnifiedCarry', 'UnifiedCarryFlatEnvCfg'),
+    ('UnifiedBaseline', 'UnifiedBaselineFlatEnvCfg'),
+):
+    gym.register(
+        id=f'RobotLab-Isaac-Velocity-Flat-Go2-X5-{_suffix}-v0',
+        entry_point='isaaclab.envs:ManagerBasedRLEnv',
+        disable_env_checker=True,
+        kwargs={
+            'env_cfg_entry_point': f'{__name__}.unified_carry_env_cfg:{_cfg}',
+            'rsl_rl_cfg_entry_point': f'{__name__}.unified_carry_env_cfg:UnifiedCarryPPORunnerCfg',
+        },
+    )
