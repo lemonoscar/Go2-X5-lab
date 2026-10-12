@@ -66,6 +66,8 @@ def main():
             max_drift = torch.maximum(max_drift,drift)
             if step%10==0:
                 f.write(json.dumps({'t':step*env.unwrapped.step_dt,'command':target.tolist(),
+                    'applied_command':term.command.tolist(),
+                    'arm_position_error':(robot.data.joint_pos[:,term.arm_ids]-robot.data.default_joint_pos[:,term.arm_ids]).abs().amax(-1).tolist(),
                     'velocity':velocity.tolist(),'position':robot.data.root_pos_w.tolist(),
                     'quaternion_wxyz':robot.data.root_quat_w.tolist(),'drift':drift.tolist(),
                     'terminated':terminated.tolist()})+'\n')

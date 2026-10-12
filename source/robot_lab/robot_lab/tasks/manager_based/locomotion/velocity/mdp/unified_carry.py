@@ -21,6 +21,8 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
         self.history = ShortHistory(self.num_envs, self.device)
         self.joint_ids = self.robot.find_joints(cfg.joint_names, preserve_order=True)[0]
         self.arm_ids = self.robot.find_joints([f'arm_joint{i}' for i in range(1, 7)], preserve_order=True)[0]
+        self.metrics['arm_stow_error'] = self.phase.clone()
+        self.metrics['waiting_for_stow'] = self.phase.clone()
 
     def reset(self, env_ids=None):
         ids = slice(None) if env_ids is None else env_ids
@@ -53,6 +55,8 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
         q0 = self.robot.data.default_joint_pos[:, self.arm_ids]
         arm = self._env.command_manager.get_term('arm_joint_pos')
         ready = ((q - q0).abs().amax(-1) < 0.06) & ((arm.command - q0).abs().amax(-1) < 0.03)
+        self.metrics['arm_stow_error'].copy_((q-q0).abs().amax(-1))
+        self.metrics['waiting_for_stow'].copy_(((self.requested != 0).any(-1) & ~ready).float())
         self.vel_command_b[~ready] = 0
         standing = (self.vel_command_b == 0).all(-1)
         entered = standing & ~self.was_standing
