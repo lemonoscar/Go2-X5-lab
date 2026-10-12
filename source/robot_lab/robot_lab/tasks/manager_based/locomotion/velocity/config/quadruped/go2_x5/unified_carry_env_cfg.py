@@ -10,6 +10,7 @@ from robot_lab.tasks.manager_based.locomotion.velocity.mdp.unified_carry import 
 from .train_route_env_cfg import (
     Go2X5DogOnlyRoughEnvCfg, DOG_ONLY_ROUGH_CHECKPOINT_JOINT_POS,
     DOG_ONLY_ROUGH_CHECKPOINT_BASE_HEIGHT,
+    FLAT_FOUNDATION_TERRAIN_CFG,
 )
 from .agents.rsl_rl_ppo_cfg import Go2X5DogOnlyRoughPPORunnerCfg
 
@@ -24,9 +25,10 @@ class UnifiedCarryFlatEnvCfg(Go2X5DogOnlyRoughEnvCfg):
         self.scene.robot.init_state = self.scene.robot.init_state.replace(
             joint_pos=joints, pos=(0, 0, DOG_ONLY_ROUGH_CHECKPOINT_BASE_HEIGHT))
         self.scene.num_envs = 1024
-        self.scene.terrain.terrain_type = 'plane'
-        self.scene.terrain.terrain_generator = None
-        self.scene.terrain.max_init_terrain_level = None
+        # Procedural mesh plane avoids GroundPlaneCfg's remote USD reference.
+        self.scene.terrain.terrain_type = 'generator'
+        self.scene.terrain.terrain_generator = FLAT_FOUNDATION_TERRAIN_CFG.copy()
+        self.scene.terrain.max_init_terrain_level = 0
         # Headless physics must not wait for remote HDR/MDL visual downloads.
         self.scene.terrain.visual_material = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.35, 0.35, 0.35))
         self.scene.sky_light.spawn.texture_file = None
