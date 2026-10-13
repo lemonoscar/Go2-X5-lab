@@ -7,7 +7,7 @@ from isaaclab.managers import CommandTerm, CommandTermCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.math import euler_xyz_from_quat, quat_apply_inverse
 
-from .unified_contract import ShortHistory, filter_command
+from .unified_contract import ShortHistory, filter_command, gait_frequency, gait_swing_mask
 
 
 class UnifiedVelocityCommand(UniformVelocityCommand):
@@ -73,8 +73,7 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
         self.anchor[entered] = self.robot.data.root_pos_w[entered]
         yaw = euler_xyz_from_quat(self.robot.data.root_quat_w)[2]
         self.yaw_anchor[entered] = yaw[entered]
-        speed = torch.linalg.vector_norm(self.vel_command_b[:, :2], dim=-1)
-        frequency = 0.7 + 1.3 * (speed / 0.75 + self.vel_command_b[:, 2].abs() / 0.6).clamp(0, 1)
+        frequency = gait_frequency(self.vel_command_b, self.cfg.gait_frequency_min, self.cfg.gait_frequency_max)
         self.phase = torch.where(standing, 0.0, (self.phase + self._env.step_dt * frequency) % 1.0)
         self.was_standing.copy_(standing)
 
@@ -82,6 +81,9 @@ class UnifiedVelocityCommand(UniformVelocityCommand):
 @configclass
 class UnifiedVelocityCommandCfg(UniformVelocityCommandCfg):
     class_type: type = UnifiedVelocityCommand
+    gait_frequency_min: float = 0.7
+    gait_frequency_max: float = 2.0
+    swing_fraction: float = 0.20
     standing_seconds: float = 65.0
     stow_tolerance: float = 0.10
     joint_names: list[str] = []
@@ -195,9 +197,7 @@ def four_beat_reward(env):
         names = ['RL_foot', 'FL_foot', 'RR_foot', 'FR_foot']
         term.feet_ids = term.robot.find_bodies(names, preserve_order=True)[0]
         term.sensor_ids = env.scene['contact_forces'].find_bodies(names, preserve_order=True)[0]
-    offsets = term.phase.new_tensor([0, 0.25, 0.5, 0.75])
-    local = (term.phase[:, None] - offsets) % 1
-    swing = local < 0.20
+    swing = gait_swing_mask(term.phase, term.cfg.swing_fraction)
     sensor = env.scene['contact_forces']
     force = sensor.data.net_forces_w[:, term.sensor_ids].norm(dim=-1)
     velocity = term.robot.data.body_lin_vel_w[:, term.feet_ids].norm(dim=-1)
@@ -205,3 +205,10 @@ def four_beat_reward(env):
     moving = (term.command != 0).any(-1)
     upright = (-term.robot.data.projected_gravity_b[:, 2]).clamp(0, 1)
     return score.mean(-1) * moving * upright
+
+
+def moving_action_rate(env):
+    """Soft leg-target smoothing only while a locomotion command is applied."""
+    moving = (env.command_manager.get_term('base_velocity').command != 0).any(-1)
+    delta = env.action_manager.action - env.action_manager.prev_action
+    return delta.square().sum(-1) * moving

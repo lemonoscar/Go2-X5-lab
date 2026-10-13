@@ -29,6 +29,18 @@ def main():
         pass
     else:
         raise AssertionError('NaN was accepted')
+    commands = torch.tensor([[0.,0,0],[.75,0,0],[-.5,0,0],[0,.2,0],[0,0,.3]])
+    original = c.gait_frequency(commands)
+    smooth = c.gait_frequency(commands, .55, 1.6)
+    torch.testing.assert_close(original, torch.tensor([0.,2.,1.5666667,1.0466667,1.35]))
+    torch.testing.assert_close(smooth[:2], torch.tensor([0., 1.6]))
+    assert (smooth[2:] < original[2:]).all()
+    phase = torch.arange(10000) / 10000
+    swing = c.gait_swing_mask(phase, .24)
+    assert (swing.sum(-1) <= 1).all(), 'Reference swings overlap'
+    torch.testing.assert_close(swing.float().mean(0), torch.full((4,), .24), atol=.0002, rtol=0)
+    assert (.24 / smooth[1:] > .20 / original[1:]).all()
+    print('PASS: original gait compatibility, stand/pure-yaw, lower-frequency ceiling, longer non-overlapping swings')
     h = c.ShortHistory(2, 'cpu')
     f = torch.ones(2,54)
     assert (h.update(f, 0) == 1).all()

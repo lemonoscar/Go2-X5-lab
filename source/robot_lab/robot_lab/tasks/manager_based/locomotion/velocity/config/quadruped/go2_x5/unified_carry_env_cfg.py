@@ -5,7 +5,7 @@ import isaaclab.sim as sim_utils
 
 from robot_lab.tasks.manager_based.locomotion.velocity.mdp.unified_carry import (
     UnifiedArmCommandCfg, UnifiedVelocityCommandCfg, four_beat_reward,
-    standing_cost, unified_features,
+    standing_cost, unified_features, moving_action_rate,
 )
 from .train_route_env_cfg import (
     Go2X5DogOnlyRoughEnvCfg, DOG_ONLY_ROUGH_CHECKPOINT_JOINT_POS,
@@ -91,3 +91,23 @@ class UnifiedCarryPPORunnerCfg(Go2X5DogOnlyRoughPPORunnerCfg):
         self.algorithm.schedule = 'fixed'
         self.algorithm.entropy_coef = 0.001
         self.algorithm.desired_kl = 0.01
+
+
+@configclass
+class UnifiedSmoothWalkEnvCfg(UnifiedCarryFlatEnvCfg):
+    """Conservative smoother-swing experiment; original stage 1 stays reproducible."""
+    def __post_init__(self):
+        super().__post_init__()
+        self.commands.base_velocity.gait_frequency_min = 0.55
+        self.commands.base_velocity.gait_frequency_max = 1.6
+        # Leave a small gap between reference swings; no forced foot locking.
+        self.commands.base_velocity.swing_fraction = 0.24
+        self.rewards.moving_action_rate = RewTerm(func=moving_action_rate, weight=-0.005)
+
+
+@configclass
+class UnifiedSmoothWalkPPORunnerCfg(UnifiedCarryPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = 'go2_x5_unified_smooth_walk'
+        self.max_iterations = 2000

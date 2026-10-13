@@ -51,3 +51,31 @@ point to the isolated checkout, not the old editable install.
 - Isolated MuJoCo 483-input profile with exactly matching history, phase, frames and control timing.
 
 Do not claim carrying, world-TCP or sim2sim acceptance from the stage 1 command diagnostic.
+
+## 舒缓摆腿配置（待续训验证）
+
+任务：`RobotLab-Isaac-Velocity-Flat-Go2-X5-UnifiedSmoothWalk-v0`。
+从第一阶段 `model_1499.pt` 续训；483 维观测、12 维腿部动作不变，无需再次扩展网络。
+原 `UnifiedCarry` 任务保留原参数，便于对照。
+
+- 四拍参考摆动占比：0.20 → 0.24；相位间隔仍为 0.25，参考摆动窗口不重叠。
+- 频率公式：`0.55 + 1.05 * clamp(norm(vxy)/0.75 + abs(wz)/0.6, 0, 1)` Hz；站立相位为零。
+  高速前进为 1.6 Hz（参考摆动 0.15 秒）；后退 -0.5 为 1.25 Hz；侧移 0.2 为 0.83 Hz；转向 0.3 为 1.075 Hz。
+- 新增仅在实际行走指令非零时生效的动作变化平方和惩罚，权重 -0.005；站立及等待收臂时为零。
+  这是轻量平滑项，不是落足次数惩罚，也不能保证减少实际碎步。
+- 原速度范围、逐轴死区、站立奖励、机械臂控制、速度跟踪奖励均继承第一阶段。
+- 独立实验目录名：`go2_x5_unified_smooth_walk`；继承学习率 5e-5，额外执行 2000 次更新。
+
+续训入口（在已配置的 IsaacLab 环境和仓库根目录中执行）：
+
+```bash
+python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-Go2-X5-UnifiedSmoothWalk-v0 \
+  --resume --checkpoint /absolute/path/to/model_1499.pt --no_load_optimizer \
+  --headless --device cuda:0 --num_envs 1024 --max_iterations 2000 \
+  --seed 42 --run_name smooth-swing
+```
+
+此变更只完成配置，未证明动作已经改善。续训对照应记录实际足端接触周期、重复落足、滑移、
+速度误差和底座姿态，并回归站立动臂位移。不得通过修改播放速度展示“变慢”；
+评估循环每步只能由环境推进一次命令相位，不应额外调用 `_update_command()`。

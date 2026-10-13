@@ -12,6 +12,18 @@ EXTRA_DIM = 7 + HISTORY_LENGTH * FRAME_DIM
 OBS_DIM = BASE_DIM + EXTRA_DIM
 
 
+def gait_frequency(command, minimum=0.7, maximum=2.0):
+    """Reference cycle Hz, zero at stand; includes pure yaw commands."""
+    demand = (command[..., :2].norm(dim=-1) / 0.75 + command[..., 2].abs() / 0.6).clamp(0, 1)
+    return torch.where((command != 0).any(-1), minimum + (maximum - minimum) * demand, 0.0)
+
+
+def gait_swing_mask(phase, fraction=0.20):
+    if not 0 < fraction <= 0.25:
+        raise ValueError('Four-beat swing fraction must be in (0, 0.25]')
+    return (phase[..., None] - phase.new_tensor([0, 0.25, 0.5, 0.75])) % 1 < fraction
+
+
 def filter_command(command):
     if command.shape[-1] != 3 or not torch.isfinite(command).all():
         raise ValueError("Expected finite [...,3] velocity commands")
