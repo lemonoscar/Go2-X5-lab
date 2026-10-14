@@ -74,6 +74,9 @@ def patch_complete(env):
 
 
 def payload_terrain_levels(env, env_ids):
+    # Before the first reset, root state is not located at its terrain origin.
+    if env.common_step_counter == 0:
+        return env.scene.terrain.terrain_levels.float().mean()
     ids = torch.as_tensor(env_ids, device=env.device, dtype=torch.long)
     flat = is_env_assigned_to_terrain(env, 'flat')[ids]
     completed = patch_complete(env)[ids]
