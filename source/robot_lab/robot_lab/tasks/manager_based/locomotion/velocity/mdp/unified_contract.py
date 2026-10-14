@@ -77,3 +77,13 @@ def expand_state_dict(state):
         new[:, :BASE_DIM] = old
         result[key] = new
     return result
+
+
+def combine_payload_inertia(mass, inertia, payload, offset, radius=0.015):
+    """Parallel-axis combination about new COM, in original COM coordinates."""
+    total = mass + payload
+    eye = torch.eye(3, device=offset.device, dtype=offset.dtype)
+    shift = offset.square().sum(-1)[..., None, None] * eye - offset[..., :, None] * offset[..., None, :]
+    combined = inertia + (mass * payload / total)[..., None, None] * shift
+    combined += (0.4 * payload * radius**2)[..., None, None] * eye
+    return total, combined
