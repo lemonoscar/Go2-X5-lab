@@ -24,7 +24,7 @@ class UnifiedPayloadTerrainEnvCfg(UnifiedCarryFlatEnvCfg):
             sub_terrains={
                 'flat': terrains.MeshPlaneTerrainCfg(proportion=6/12),
                 'rough': terrains.HfRandomUniformTerrainCfg(proportion=2/12,noise_range=(.01,.06),noise_step=.01,border_width=1.),
-                'blocks': terrains.MeshRandomGridTerrainCfg(proportion=1/12,grid_width=.5,grid_height_range=(.02,.10),platform_width=3.),
+                'blocks': terrains.MeshRandomGridTerrainCfg(proportion=1/12,grid_width=.45,grid_height_range=(.02,.10),platform_width=3.),
                 'slope': terrains.HfPyramidSlopedTerrainCfg(proportion=1/12,slope_range=(0.,.25),platform_width=3.,border_width=1.),
                 'stairs_up': terrains.MeshInvertedPyramidStairsTerrainCfg(proportion=1/12,step_height_range=(.03,.10),step_width=.3,platform_width=3.,border_width=1.),
                 'stairs_down': terrains.MeshPyramidStairsTerrainCfg(proportion=1/12,step_height_range=(.03,.10),step_width=.3,platform_width=3.,border_width=1.),
