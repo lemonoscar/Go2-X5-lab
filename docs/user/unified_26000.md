@@ -101,3 +101,29 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
 通过动力学读回和启动检查不代表通过负载/粗糙地形验收。训练后需分空载及负载档、
 分地形难度评估速度跟踪、跌倒、站立动臂位移，并回归前后/左右/转向各轴；
 完整作业范围与 MuJoCo 验收仍是后续独立步骤。
+
+## 2026-10-16: measured stride repair (experimental)
+
+Task `RobotLab-Isaac-Velocity-Flat-Go2-X5-UnifiedStrideRepair-v0` resumes accepted
+stage1 `model_1499.pt`, fresh optimizer, 2000 additional updates, 1024 envs, seed42.
+Flat only; half empty, otherwise 5--150 g equivalent rigid TCP payload. Full command
+ranges/dead zones and 35% standing sampling (plus dead-zone zeros) remain intact.
+The existing small joint-space arm excitation remains; this is not full TCP-work acceptance.
+
+Reference frequency remains 0.7--2 Hz. Swing fraction .24; balanced swing/support
+reward .8 replaces the original .3 average. Measured Schmitt contact thresholds
+10/3 N drive bounded short-swing, short-stance and signed body-relative foot
+excursion event costs, weight -.025 per event (divide by dt before RewardManager).
+At .5 m/s: minimum air .14 s, stance .22 s, excursion .15 m; at .75 m/s:
+minimum air .12 s, excursion capped .20 m. Pure yaw has no translation excursion
+cost. Standing disables all event costs. Tilt above approximately 11.5 degrees
+reduces event cost to 25% to allow recovery. Existing air-time reward is removed.
+Yaw tracking weight3.5, orientation-.3, slip-.12; action-rate penalty unchanged.
+No new actor observations, no payload label, no hard foot locking.
+
+Contact regression: `python test/test_unified_stride.py`; also run existing
+contract/payload checks and a 96-env simulator probe before training. Probe must
+print STRIDE_PROBE_COMPLETE and show finite rewards/observations. A normal launch
+is not evidence of improved gait. Compare actual contacts/stride, vx/wz error,
+slip and tilt, startup failures and 60s standing arm drift against stage1 before
+advancing to 450g and rough terrain. Count resets from time zero, not only after settling.

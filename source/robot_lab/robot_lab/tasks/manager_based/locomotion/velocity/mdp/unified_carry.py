@@ -190,7 +190,7 @@ def standing_cost(env, kind):
     return cost.clamp_max(25) * standing
 
 
-def four_beat_reward(env):
+def four_beat_reward(env, balanced=False):
     """WTW-style swing-force/stance-speed shaping, soft four-beat schedule."""
     term = env.command_manager.get_term('base_velocity')
     if not hasattr(term, 'feet_ids'):
@@ -204,7 +204,14 @@ def four_beat_reward(env):
     score = torch.where(swing, torch.exp(-(force / 30).square()), torch.exp(-(velocity / 0.2).square()))
     moving = (term.command != 0).any(-1)
     upright = (-term.robot.data.projected_gravity_b[:, 2]).clamp(0, 1)
-    return score.mean(-1) * moving * upright
+    if balanced:
+        # Give the scheduled swing and all support feet equal influence.
+        swing_score = (score * swing).sum(-1) / swing.sum(-1).clamp_min(1)
+        stance_score = (score * ~swing).sum(-1) / (~swing).sum(-1).clamp_min(1)
+        value = torch.where(swing.any(-1), 0.5 * (swing_score + stance_score), stance_score)
+    else:
+        value = score.mean(-1)
+    return value * moving * upright
 
 
 def moving_action_rate(env):

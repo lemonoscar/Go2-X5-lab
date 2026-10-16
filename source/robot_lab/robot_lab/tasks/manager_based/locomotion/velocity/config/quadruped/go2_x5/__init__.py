@@ -698,3 +698,14 @@ gym.register(
         'rsl_rl_cfg_entry_point': f'{__name__}.unified_payload_env_cfg:UnifiedPayloadTerrainPPORunnerCfg',
     },
 )
+
+
+gym.register(
+    id='RobotLab-Isaac-Velocity-Flat-Go2-X5-UnifiedStrideRepair-v0',
+    entry_point='isaaclab.envs:ManagerBasedRLEnv',
+    disable_env_checker=True,
+    kwargs={
+        'env_cfg_entry_point': f'{__name__}.unified_carry_env_cfg:UnifiedStrideRepairEnvCfg',
+        'rsl_rl_cfg_entry_point': f'{__name__}.unified_carry_env_cfg:UnifiedStrideRepairPPORunnerCfg',
+    },
+)

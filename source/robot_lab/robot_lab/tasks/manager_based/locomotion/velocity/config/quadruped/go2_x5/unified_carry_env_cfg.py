@@ -111,3 +111,34 @@ class UnifiedSmoothWalkPPORunnerCfg(UnifiedCarryPPORunnerCfg):
         super().__post_init__()
         self.experiment_name = 'go2_x5_unified_smooth_walk'
         self.max_iterations = 2000
+
+
+@configclass
+class UnifiedStrideRepairEnvCfg(UnifiedCarryFlatEnvCfg):
+    """Flat empty/light-load gait repair; retain station arm replay and full command limits."""
+    def __post_init__(self):
+        super().__post_init__()
+        from isaaclab.managers import EventTermCfg as EventTerm
+        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.unified_payload import randomize_tcp_payload
+        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.unified_stride import ShortStepCost
+        self.scene.contact_forces.track_air_time = True
+        self.commands.base_velocity.swing_fraction = 0.24
+        self.rewards.four_beat.weight = 0.8
+        self.rewards.four_beat.params = {'balanced': True}
+        self.rewards.short_step = RewTerm(func=ShortStepCost, weight=-0.025)
+        # Replace the inherited unbounded air-time preference with measured short-event costs.
+        self.rewards.feet_air_time = None
+        self.rewards.feet_air_time_variance = None
+        self.rewards.track_ang_vel_z_exp.weight = 3.5
+        self.rewards.flat_orientation_l2.weight = -0.3
+        self.rewards.feet_slide.weight = -0.12
+        self.events.tcp_payload = EventTerm(func=randomize_tcp_payload, mode='reset',
+            params={'mass_range': (0.005, 0.15), 'empty_probability': 0.5})
+
+
+@configclass
+class UnifiedStrideRepairPPORunnerCfg(UnifiedCarryPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = 'go2_x5_unified_stride_repair'
+        self.max_iterations = 2000
