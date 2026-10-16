@@ -83,3 +83,61 @@ def payload_terrain_levels(env, env_ids):
     failed = env.termination_manager.terminated[ids]
     env.scene.terrain.update_env_origins(ids, completed & ~flat & ~failed, failed & ~flat)
     return env.scene.terrain.terrain_levels.float().mean()
+
+
+class TerrainFocusVelocityCommand(PayloadVelocityCommand):
+    def _resample_command(self, env_ids):
+        super()._resample_command(env_ids)
+        ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
+        flat = is_env_assigned_to_terrain(self._env, 'flat')[ids]
+        self.requested[ids[flat]] = 0
+        forward = ~flat & (torch.rand(len(ids), device=self.device) < 0.8)
+        self.requested[ids[forward]] = self.requested.new_tensor([0.5, 0., 0.])
+        self.vel_command_b[ids] = self.requested[ids]
+        self.is_standing_env[ids] = flat
+
+
+@configclass
+class TerrainFocusVelocityCommandCfg(PayloadVelocityCommandCfg):
+    class_type: type = TerrainFocusVelocityCommand
+
+
+class FullRangeArmCommand(PayloadArmCommand):
+    """Full soft joint limits, with continuous out/hold/back targets and bounded speed.
+
+    Joint-space stress coverage, not a collision-certified TCP workspace planner.
+    """
+    def _resample_command(self, env_ids):
+        ids = torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
+        limits = self.robot.data.soft_joint_pos_limits[ids][:, self.ids]
+        sample = torch.rand(len(ids), 6, device=self.device)
+        # Half of joint targets are exact soft-limit endpoints; half cover the interior.
+        sample = torch.where(sample < .25, 0., torch.where(sample > .75, 1., (sample-.25)*2))
+        target = limits[..., 0] + sample * (limits[..., 1] - limits[..., 0])
+        self.offset[ids] = target - self.robot.data.default_joint_pos[ids][:, self.ids]
+        self.offset[ids[~is_env_assigned_to_terrain(self._env, 'flat')[ids]]] = 0
+        self.clock[ids] = 0
+
+    def _update_command(self):
+        from .unified_contract import full_arm_envelope
+        base = self._env.command_manager.get_term('base_velocity')
+        standing = (base.requested == 0).all(-1)
+        settled = self.robot.data.root_lin_vel_b[:, :2].norm(dim=-1) < .1
+        self.ready_time = torch.where(standing & settled, self.ready_time + self._env.step_dt, 0.)
+        active = standing & (self.ready_time >= .5)
+        self.clock += self._env.step_dt * active
+        self.clock[~standing] = 0
+        default = self.robot.data.default_joint_pos[:, self.ids]
+        desired = default + self.offset * full_arm_envelope(self.clock)[:, None] * active[:, None]
+        limits = self.robot.data.soft_joint_pos_limits[:, self.ids]
+        desired = torch.maximum(torch.minimum(desired, limits[..., 1]), limits[..., 0])
+        step = self.cfg.speed * self._env.step_dt
+        self.target += (desired - self.target).clamp(-step, step)
+
+
+@configclass
+class FullRangeArmCommandCfg(PayloadArmCommandCfg):
+    class_type: type = FullRangeArmCommand
+    speed: float = 0.75
+    # Pause/resume of the envelope must not resample a new endpoint mid-excursion.
+    resampling_time_range: tuple[float, float] = (65., 65.)

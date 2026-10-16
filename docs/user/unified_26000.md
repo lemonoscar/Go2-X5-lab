@@ -127,3 +127,23 @@ print STRIDE_PROBE_COMPLETE and show finite rewards/observations. A normal launc
 is not evidence of improved gait. Compare actual contacts/stride, vx/wz error,
 slip and tilt, startup failures and 60s standing arm drift against stage1 before
 advancing to 450g and rough terrain. Count resets from time zero, not only after settling.
+
+## 2026-10-17: separate terrain-focus and full-range arm run
+
+`RobotLab-Isaac-Velocity-Rough-Go2-X5-UnifiedTerrainFocus-v0`: resume payload-terrain
+`2026-10-14_23-26-18_payload-terrain-original-gait/model_3498.pt` with fresh optimizer,
+4096 envs, 2000 additional updates. Keep the concurrent stride-repair run untouched.
+20% flat stationary arm work, 20% rough, 20% blocks, 20% ascending stairs and 20%
+descending stairs. Seven risers per outward stair flight, .4m tread, height
+curriculum .03--.10m. 80% of rough commands are vx=.5, vy=wz=0; remaining draws
+retain the original full-range mixture/dead zones. Original frequency/rewards,
+0/5--450g rigid equivalent payload and terrain curriculum are retained.
+
+Arm targets cover the entire simulator soft joint range (90% of hard range).
+Each joint draw: 25% lower endpoint, 25% upper endpoint, 50% uniform interior.
+32s cycle: 12s outward, 4s endpoint hold, 12s return, 4s stowed hold. Target slew
+cap .75rad/s; envelope pauses unless stationary and settled; walking requests
+return to stow under the existing gate. No hard-limit forcing or instantaneous
+pose reset. This is maximal joint-space stress coverage, NOT collision-certified
+workspace trajectories or completed physical manipulation acceptance. Existing
+small-amplitude tasks and the currently running stride experiment remain unchanged.

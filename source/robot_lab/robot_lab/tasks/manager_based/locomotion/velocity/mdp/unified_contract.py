@@ -87,3 +87,11 @@ def combine_payload_inertia(mass, inertia, payload, offset, radius=0.015):
     combined = inertia + (mass * payload / total)[..., None, None] * shift
     combined += (0.4 * payload * radius**2)[..., None, None] * eye
     return total, combined
+
+
+def full_arm_envelope(clock):
+    """32-second out (12s), hold (4s), return (12s), rest (4s) cycle."""
+    t = clock.remainder(32.)
+    outward = .5 - .5 * torch.cos(torch.pi * (t / 12.).clamp(0., 1.))
+    returning = .5 + .5 * torch.cos(torch.pi * ((t - 16.) / 12.).clamp(0., 1.))
+    return torch.where(t < 16., outward, returning)

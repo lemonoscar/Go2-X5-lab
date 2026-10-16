@@ -41,3 +41,37 @@ class UnifiedPayloadTerrainPPORunnerCfg(UnifiedCarryPPORunnerCfg):
         super().__post_init__()
         self.experiment_name = 'go2_x5_unified_payload_terrain'
         self.max_iterations = 2000
+
+
+@configclass
+class UnifiedTerrainFocusEnvCfg(UnifiedPayloadTerrainEnvCfg):
+    """80% terrain locomotion and 20% full-range stationary arm stabilization."""
+    def __post_init__(self):
+        super().__post_init__()
+        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.unified_payload import (
+            TerrainFocusVelocityCommandCfg, FullRangeArmCommandCfg,
+        )
+        self.scene.num_envs = 4096
+        self.commands.base_velocity = TerrainFocusVelocityCommandCfg(
+            asset_name='robot', joint_names=self.joint_names, resampling_time_range=(65.,65.),
+            rel_standing_envs=0., rel_heading_envs=0., heading_command=False, debug_vis=False,
+            ranges=TerrainFocusVelocityCommandCfg.Ranges(lin_vel_x=(-.5,.75),lin_vel_y=(-.2,.2),ang_vel_z=(-.3,.3)))
+        self.commands.arm_joint_pos = FullRangeArmCommandCfg(debug_vis=False)
+        terrain = self.scene.terrain.terrain_generator
+        terrain.num_cols = 10
+        terrain.sub_terrains = {
+            'flat': terrains.MeshPlaneTerrainCfg(proportion=.2),
+            'rough': terrains.HfRandomUniformTerrainCfg(proportion=.2,noise_range=(.01,.06),noise_step=.01,border_width=1.),
+            'blocks': terrains.MeshRandomGridTerrainCfg(proportion=.2,grid_width=.45,grid_height_range=(.02,.10),platform_width=3.),
+            'stairs_up': terrains.MeshInvertedPyramidStairsTerrainCfg(proportion=.2,step_height_range=(.03,.10),step_width=.4,platform_width=2.4,border_width=4.6),
+            'stairs_down': terrains.MeshPyramidStairsTerrainCfg(proportion=.2,step_height_range=(.03,.10),step_width=.4,platform_width=2.4,border_width=4.6),
+        }
+        # Six surrounding rings plus center transition = seven risers; height curriculum remains.
+        self.scene.terrain.max_init_terrain_level = 0
+
+
+@configclass
+class UnifiedTerrainFocusPPORunnerCfg(UnifiedPayloadTerrainPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = 'go2_x5_unified_terrain_focus'
