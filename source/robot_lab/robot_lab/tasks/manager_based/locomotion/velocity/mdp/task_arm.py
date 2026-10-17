@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 import torch
 from isaaclab.utils import configclass
-from .unified_carry import UnifiedArmCommand, UnifiedArmCommandCfg
+from isaaclab.managers import CommandTermCfg
+from .unified_carry import UnifiedArmCommand
 from .utils import is_env_assigned_to_terrain
 from .unified_payload import randomize_tcp_payload
 
@@ -73,8 +74,9 @@ class TaskArmCommand(UnifiedArmCommand):
         self.metrics['tracking_error'].copy_((self.robot.data.joint_pos[:,self.ids]-self.target).abs().amax(-1))
 
 @configclass
-class TaskArmCommandCfg(UnifiedArmCommandCfg):
+class TaskArmCommandCfg(CommandTermCfg):
     class_type: type=TaskArmCommand
+    asset_name: str='robot'
     stage: int=0
     hold_seconds: float=1.
     resampling_time_range: tuple[float,float]=(100000.,100000.)
