@@ -12,6 +12,14 @@ DATA = Path(__file__).with_name('arm_task_data')
 class TaskArmCommand(UnifiedArmCommand):
     def __init__(self, cfg, env):
         super().__init__(cfg, env)
+        if self.robot.is_fixed_base:
+            raise RuntimeError('Task-arm stabilization requires a floating base')
+        for name, actuator in self.robot.actuators.items():
+            if name.startswith('arm_'):
+                limit=15. if name in ('arm_joint12','arm_joint3') else 3.
+                if (actuator.effort_limit_sim>limit+1e-5).any() or (actuator.velocity_limit_sim>3.00001).any():
+                    raise RuntimeError('Unexpected physics actuator limits: '+name)
+        print('TASK_ARM_CONTRACT floating base; motor/solver limits 15/3 Nm, 3 rad/s',flush=True)
         paths = [p for p in json.loads((DATA/'library.json').read_text())['paths'] if p['stage']==cfg.stage]
         weights={'reach':.25,'lift':.25,'transfer':.15,'wrist':.15,'stow':.10,'arc':.10}
         # Offline trajectory sampling at the actual policy period. Each segment is
