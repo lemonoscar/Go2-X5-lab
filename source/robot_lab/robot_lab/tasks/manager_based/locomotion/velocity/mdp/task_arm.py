@@ -20,7 +20,12 @@ class TaskArmCommand(UnifiedArmCommand):
                 limit=15. if name in ('arm_joint12','arm_joint3') else 3.
                 if (actuator.effort_limit_sim>limit+1e-5).any() or (actuator.velocity_limit_sim>3.00001).any():
                     raise RuntimeError('Unexpected physics actuator limits: '+name)
-        print('TASK_ARM_CONTRACT floating base; motor/solver limits 15/3 Nm, 3 rad/s',flush=True)
+        effort=self.robot.root_physx_view.get_dof_max_forces()[0,self.ids]
+        velocity=self.robot.root_physx_view.get_dof_max_velocities()[0,self.ids]
+        expected=effort.new_tensor([15.,15.,15.,3.,3.,3.])
+        if not torch.allclose(effort,expected) or not torch.allclose(velocity,velocity.new_full((6,),3.)):
+            raise RuntimeError('PhysX limit readback differs from task contract')
+        print('TASK_ARM_CONTRACT floating base; PhysX effort',effort.tolist(),'velocity',velocity.tolist(),flush=True)
         paths = [p for p in json.loads((DATA/'library.json').read_text())['paths'] if p['stage']==cfg.stage]
         weights={'reach':.25,'lift':.25,'transfer':.15,'wrist':.15,'stow':.10,'arc':.10}
         # Offline trajectory sampling at the actual policy period. Each segment is
