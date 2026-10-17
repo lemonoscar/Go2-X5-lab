@@ -100,8 +100,8 @@ class UnifiedTaskArmEnvCfg(UnifiedTerrainFocusEnvCfg):
         for name,a in self.scene.robot.actuators.items():
             if name.startswith('arm_'):
                 proximal=name in ('arm_joint12','arm_joint3')
-                a.effort_limit=a.saturation_effort=15. if proximal else 3.
-                a.velocity_limit=3.
+                a.effort_limit=a.effort_limit_sim=a.saturation_effort=15. if proximal else 3.
+                a.velocity_limit=a.velocity_limit_sim=3.
                 a.stiffness=250. if proximal else 80.
                 a.damping=8. if proximal else 3.
         self.rewards.standing_position.weight=-2.
