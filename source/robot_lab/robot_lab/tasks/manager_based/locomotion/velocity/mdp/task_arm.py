@@ -100,6 +100,7 @@ def task_clearance_violation(env):
                 if (a=='arm_link2' and b=='base' and bi==0) or (b=='arm_link2' and a=='base' and ai==0):continue
                 pairs.append((i,j))
         bounds=torch.tensor(bounds,device=env.device);pairs=torch.tensor(pairs,device=env.device)
+        env._task_box_names=names
         env._task_boxes=(bodyids,(bounds[:,0]+bounds[:,1])/2,(bounds[:,1]-bounds[:,0])/2,pairs)
     ids,local,half,pairs=env._task_boxes
     rot=matrix_from_quat(robot.data.body_quat_w[:,ids]);center=robot.data.body_pos_w[:,ids]+torch.einsum('nbij,bj->nbi',rot,local)
@@ -110,7 +111,8 @@ def task_clearance_violation(env):
     distance=(axes*(cb-ca)[:,:,None,:]).sum(-1).abs()
     radii=(axes@ra).abs()@half[i,:,None]+(axes@rb).abs()@half[j,:,None]
     separated=((distance>radii[...,0]+.003)&valid).any(-1)
-    return (~separated).any(-1)
+    env._task_overlap_pairs=~separated
+    return env._task_overlap_pairs.any(-1)
 
 
 from isaaclab.sim.utils import clone
