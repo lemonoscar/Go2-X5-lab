@@ -70,13 +70,14 @@ def build():
   for kind in ['reach','lift','transfer','wrist','stow','arc']:
    accepted=0
    for attempt in range(400):
-    p=np.array([rng.uniform(.39,.54 if stage==0 else .68),rng.uniform(-.10,.10) if stage==0 else rng.uniform(-.28,.28),rng.uniform(.16,.29)])
+    p=np.array([rng.uniform(.39,.54 if stage==0 else .68),rng.uniform(-.10,.10) if stage==0 else rng.uniform(-.28,.28),rng.uniform(.16 if stage==0 else -.02,.29)])
     if kind=='reach':points=[p,p+np.array([.06 if stage==0 else .10,0,0]),p]
     elif kind=='lift':points=[p,p-np.array([0,0,.08 if stage==0 else .16]),p]
     elif kind=='transfer':points=[p,p+[0,0,.06],p+[0,(-1 if p[1]>0 else 1)*(.10 if stage==0 else .20),.06],p+[0,(-1 if p[1]>0 else 1)*(.10 if stage==0 else .20),0]]
     elif kind in ('wrist','stow'):points=[p]
     else:points=[p+[.035*np.sin(t),.035*(1-np.cos(t)),0] for t in np.linspace(0,np.pi/2,5)]
     if any(not (.3<=v[0]<=.75 and abs(v[1])<=.35 and -.20<=v[2]<=.45) for v in points):continue
+    if stage==1 and p[2]<.12:points.insert(0,np.array([p[0],p[1],.30]))
     qs=[Q0];ok=True
     for point in points:
      q=ik(point,qs[-1])

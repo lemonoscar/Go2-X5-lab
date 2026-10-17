@@ -83,9 +83,10 @@ class UnifiedTaskArmEnvCfg(UnifiedTerrainFocusEnvCfg):
     startup_hold_seconds: float = 1.0
     def __post_init__(self):
         super().__post_init__()
-        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.task_arm import TaskArmCommandCfg, task_payload, task_clearance_violation
+        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.task_arm import TaskArmCommandCfg, task_payload, task_clearance_violation, spawn_task_robot
         self.commands.arm_joint_pos=TaskArmCommandCfg(debug_vis=False)
         self.scene.robot.spawn.articulation_props.enabled_self_collisions=True
+        self.scene.robot.spawn.func=spawn_task_robot
         self.terminations.task_clearance=DoneTerm(func=task_clearance_violation)
         terrain=self.scene.terrain.terrain_generator
         terrain.num_cols=20

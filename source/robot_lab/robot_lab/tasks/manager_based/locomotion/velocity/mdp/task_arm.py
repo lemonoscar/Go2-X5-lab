@@ -111,3 +111,21 @@ def task_clearance_violation(env):
     radii=(axes@ra).abs()@half[i,:,None]+(axes@rb).abs()@half[j,:,None]
     separated=((distance>radii[...,0]+.003)&valid).any(-1)
     return (~separated).any(-1)
+
+
+from isaaclab.sim.utils import clone
+
+@clone
+def spawn_task_robot(prim_path,cfg,translation=None,orientation=None,**kwargs):
+    """Spawn the current USD plus an invisible collision envelope on the base."""
+    from isaaclab.sim.spawners.from_files.from_files import spawn_from_usd
+    from pxr import UsdGeom,UsdPhysics,Gf
+    prim=spawn_from_usd(prim_path,cfg,translation,orientation,**kwargs)
+    stage=prim.GetStage();parent=stage.GetPrimAtPath(prim_path+'/base')
+    if not parent or not parent.HasAPI(UsdPhysics.RigidBodyAPI):
+        raise RuntimeError('Expected floating robot base rigid body')
+    box=UsdGeom.Cube.Define(stage,prim_path+'/base/task_camera_keepout')
+    box.CreateSizeAttr(1.);box.AddTranslateOp().Set(Gf.Vec3d(.32532,0,.1085))
+    box.AddScaleOp().Set(Gf.Vec3f(.05506,.09001,.045))
+    box.CreateVisibilityAttr('invisible');UsdPhysics.CollisionAPI.Apply(box.GetPrim())
+    return prim
