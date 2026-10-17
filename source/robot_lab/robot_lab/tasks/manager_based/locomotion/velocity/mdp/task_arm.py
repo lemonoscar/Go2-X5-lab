@@ -130,4 +130,8 @@ def spawn_task_robot(prim_path,cfg,translation=None,orientation=None,**kwargs):
     box.CreateSizeAttr(1.);box.AddTranslateOp().Set(Gf.Vec3d(.32532,0,.1085))
     box.AddScaleOp().Set(Gf.Vec3f(.05506,.09001,.045))
     box.CreateVisibilityAttr('invisible');UsdPhysics.CollisionAPI.Apply(box.GetPrim())
+    # The closed finger CADs overlap (measured ~160 N at rest). Match the
+    # existing cuRobo sibling-finger exclusion; retain all other arm collisions.
+    finger=stage.GetPrimAtPath(prim_path+'/arm_link7')
+    UsdPhysics.FilteredPairsAPI.Apply(finger).CreateFilteredPairsRel().AddTarget(prim_path+'/arm_link8')
     return prim
