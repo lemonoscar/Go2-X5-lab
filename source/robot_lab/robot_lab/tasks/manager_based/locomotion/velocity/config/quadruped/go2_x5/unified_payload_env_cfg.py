@@ -75,3 +75,37 @@ class UnifiedTerrainFocusPPORunnerCfg(UnifiedPayloadTerrainPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.experiment_name = 'go2_x5_unified_terrain_focus'
+
+
+@configclass
+class UnifiedTaskArmEnvCfg(UnifiedTerrainFocusEnvCfg):
+    """Initial empty/slow task-arm repair; terrain replay retains 0--450 g."""
+    startup_hold_seconds: float = 1.0
+    def __post_init__(self):
+        super().__post_init__()
+        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.task_arm import TaskArmCommandCfg, task_payload, task_clearance_violation
+        self.commands.arm_joint_pos=TaskArmCommandCfg(debug_vis=False)
+        self.scene.robot.spawn.articulation_props.enabled_self_collisions=True
+        self.terminations.task_clearance=DoneTerm(func=task_clearance_violation)
+        terrain=self.scene.terrain.terrain_generator
+        terrain.num_cols=20
+        for name,cfg in terrain.sub_terrains.items():cfg.proportion=.6 if name=='flat' else .1
+        self.events.tcp_payload=EventTerm(func=task_payload,mode='reset')
+        # Explicit provisional URDF constraint, not a claim of hardware ratings.
+        for name,a in self.scene.robot.actuators.items():
+            if name.startswith('arm_'):
+                proximal=name in ('arm_joint12','arm_joint3')
+                a.effort_limit=a.saturation_effort=15. if proximal else 3.
+                a.velocity_limit=3.
+                a.stiffness=250. if proximal else 80.
+                a.damping=8. if proximal else 3.
+        self.rewards.standing_position.weight=-2.
+        self.rewards.standing_velocity.weight=-1.
+        self.rewards.standing_posture.weight=-1.
+
+
+@configclass
+class UnifiedTaskArmPPORunnerCfg(UnifiedTerrainFocusPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name='go2_x5_unified_task_arm'

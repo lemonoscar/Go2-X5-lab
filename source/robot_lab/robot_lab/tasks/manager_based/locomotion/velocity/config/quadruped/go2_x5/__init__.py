@@ -720,3 +720,12 @@ gym.register(
         'rsl_rl_cfg_entry_point': f'{__name__}.unified_payload_env_cfg:UnifiedTerrainFocusPPORunnerCfg',
     },
 )
+
+gym.register(
+    id='RobotLab-Isaac-Velocity-Rough-Go2-X5-UnifiedTaskArm-v0',
+    entry_point='isaaclab.envs:ManagerBasedRLEnv', disable_env_checker=True,
+    kwargs={
+        'env_cfg_entry_point': f'{__name__}.unified_payload_env_cfg:UnifiedTaskArmEnvCfg',
+        'rsl_rl_cfg_entry_point': f'{__name__}.unified_payload_env_cfg:UnifiedTaskArmPPORunnerCfg',
+    },
+)

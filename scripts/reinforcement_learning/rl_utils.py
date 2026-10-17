@@ -28,6 +28,8 @@ class ActionDelayWrapper(gym.Wrapper):
         self._delay_steps = None
         self._last_action = None
         self._pending_reset = True
+        self._startup_age = None
+        self._startup_steps = round(getattr(env.unwrapped.cfg, "startup_hold_seconds", 0.) / env.unwrapped.step_dt)
 
     def _init_buffers(self, actions: torch.Tensor):
         if self._buffer is not None:
@@ -37,6 +39,7 @@ class ActionDelayWrapper(gym.Wrapper):
         max_delay = max(self.delay_steps_range)
         buffer_shape = (max_delay + 1, self.num_envs) + actions.shape[1:]
         self._buffer = torch.zeros(buffer_shape, device=actions.device, dtype=actions.dtype)
+        self._startup_age = torch.zeros(self.num_envs, device=actions.device, dtype=torch.long)
         self._delay_steps = torch.zeros(self.num_envs, device=actions.device, dtype=torch.long)
         self._last_action = torch.zeros((self.num_envs,) + actions.shape[1:], device=actions.device, dtype=actions.dtype)
 
@@ -69,6 +72,7 @@ class ActionDelayWrapper(gym.Wrapper):
             self._buffer.zero_()
             self._last_action.zero_()
             self._buffer_idx = 0
+            self._startup_age.zero_()
             self._pending_reset = False
 
         if self.hold_prob > 0.0:
@@ -88,12 +92,16 @@ class ActionDelayWrapper(gym.Wrapper):
         self._buffer_idx = (write_idx + 1) % self._buffer.shape[0]
         self._last_action = actions
 
+        if self._startup_steps:
+            delayed_actions = torch.where((self._startup_age < self._startup_steps)[:, None], 0., delayed_actions)
+        self._startup_age += 1
         obs, reward, terminated, truncated, info = self.env.step(delayed_actions)
         done = terminated | truncated
         if not torch.is_tensor(done):
             done = torch.as_tensor(done, device=actions.device)
         if done.any():
             done_ids = torch.where(done)[0]
+            self._startup_age[done_ids] = 0
             self._buffer[:, done_ids] = 0.0
             self._last_action[done_ids] = 0.0
             self._sample_delays(done_ids)
