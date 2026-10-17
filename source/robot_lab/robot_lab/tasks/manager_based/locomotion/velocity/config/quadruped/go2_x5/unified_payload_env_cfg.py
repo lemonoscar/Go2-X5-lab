@@ -88,6 +88,10 @@ class UnifiedTaskArmEnvCfg(UnifiedTerrainFocusEnvCfg):
         self.scene.robot.spawn.articulation_props.enabled_self_collisions=True
         self.scene.robot.spawn.func=spawn_task_robot
         self.terminations.task_clearance=DoneTerm(func=task_clearance_violation)
+        from isaaclab.managers import SceneEntityCfg
+        from isaaclab.envs.mdp import illegal_contact
+        self.terminations.arm_contact=DoneTerm(func=illegal_contact, params={
+            'sensor_cfg':SceneEntityCfg('contact_forces',body_names=['arm_link.*']), 'threshold':1.0})
         terrain=self.scene.terrain.terrain_generator
         terrain.num_cols=20
         for name,cfg in terrain.sub_terrains.items():cfg.proportion=.6 if name=='flat' else .1
