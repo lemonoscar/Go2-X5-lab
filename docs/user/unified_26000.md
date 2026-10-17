@@ -147,3 +147,15 @@ return to stow under the existing gate. No hard-limit forcing or instantaneous
 pose reset. This is maximal joint-space stress coverage, NOT collision-certified
 workspace trajectories or completed physical manipulation acceptance. Existing
 small-amplitude tasks and the currently running stride experiment remain unchanged.
+
+### 2026-10-17 task-arm repair (not yet dynamically accepted)
+
+`UnifiedTaskArm` resumes terrain `model_5497.pt` with the same 483 observations / 12 leg actions. The previous full-limit sampler could withdraw its target when base speed rose; the new finite task player completes its path independently of base speed, including the checked return before walking. No load label is observed.
+
+The initial repair allocates 60% flat manipulation and 10% each rough, blocks, upstairs and downstairs replay. Flat starts empty; terrain retains 0--450 g. Expansion is gated by independent evaluation, not elapsed training steps. There are 24 initial and 24 main-region candidate paths, six action families weighted 25/25/15/15/10/10. Arcs are free-space exercises, not door-opening demonstrations. Main-region paths are not enabled in the initial stage. Library bounds are candidate bounds, not a workspace reachability claim.
+
+Geometry was extracted from the composed training USD joint frames and collision mesh bounds. `scripts/tools/build_task_arm_library.py` uses conservative link OBB rejection along the joint path, plus torso, floor and the head-camera envelope. The camera base-frame box is x=[.29779,.35285], y=±.045005, z=[.086,.131] m: housing plus 30 mm forward / 20 mm upward. Planning adds 15 mm clearance; the actual-state OBB guard uses 3 mm. Adjacent/housing OBB exclusions are explicit; PhysX self-collision is enabled to retain actual geometry interactions. These sampled guards do not certify continuous hardware safety. Finger targets remain at the existing configuration; no real object/grasp contact is simulated.
+
+Provisional arm DC-motor constraints are 15 Nm (J1--3), 3 Nm (J4--6), 3 rad/s. Gains are 250/8 and 80/3 respectively, with inherited gain randomization; all leg gains are preserved. These are simulation choices based on the supplied URDF, not verified hardware ratings. Quintic path durations bound target joint speed/acceleration at .4 rad/s and .8 rad/s², and TCP speed at .06 m/s. Runtime soft limits are checked before reset. A new-task-only one-second zero-leg-action startup is implemented in the same delay wrapper for training and evaluation.
+
+Acceptance must pair base drift (5 cm goal, 10 cm hard bound), speed and attitude with actual arm/TCP execution. Neither reward growth nor reduced arm movement establishes success. Preserve first failures and report achieved motion, payload and all cases. The original tasks and checkpoint histories remain unchanged.

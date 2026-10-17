@@ -27,7 +27,7 @@ def overlap(a,b,margin=.003):
  axes=axes[np.linalg.norm(axes,axis=1)>1e-8];axes/=np.linalg.norm(axes,axis=1)[:,None]
  return not np.any(abs(axes@(cb-ca)) > abs(axes@ra)@ha+abs(axes@rb)@hb+margin)
 # Camera housing including 20 mm above and 30 mm forward, in base frame.
-M['boxes']['camera']=[[[.29277,-.045005,.086],[.34783,.045005,.131]]]
+M['boxes']['camera']=[[[ .29779,-.045005,.086],[.35285,.045005,.131]]]
 # Rigid neighbours and mechanically overlapping wrist housings are excluded;
 # keep every other link/base/camera pair.
 IGNORE={frozenset((j['parent'],j['child'])) for j in M['joints']}
@@ -38,7 +38,7 @@ def collisions(q):
  for i,a in enumerate(names):
   for b in names[i+1:]:
    if frozenset((a,b)) in IGNORE:continue
-   if any(overlap(x,y) for ix,x in enumerate(boxes[a]) for iy,y in enumerate(boxes[b]) if not (a=='base' and ix==0 and b=='arm_link2')):bad.append((a,b))
+   if any(overlap(x,y,margin=.015 if 'camera' in (a,b) else .003) for ix,x in enumerate(boxes[a]) for iy,y in enumerate(boxes[b]) if not (a=='base' and ix==0 and b=='arm_link2')):bad.append((a,b))
  # Ground assumes base >= .25 m; enforce a 20-mm floor clearance in task library.
  for name,bb in boxes.items():
   if name.startswith('arm'):
@@ -73,7 +73,7 @@ def build():
     p=np.array([rng.uniform(.39,.54 if stage==0 else .68),rng.uniform(-.10,.10) if stage==0 else rng.uniform(-.28,.28),rng.uniform(.16,.29)])
     if kind=='reach':points=[p,p+np.array([.06 if stage==0 else .10,0,0]),p]
     elif kind=='lift':points=[p,p-np.array([0,0,.08 if stage==0 else .16]),p]
-    elif kind=='transfer':points=[p,p+[0,0,.06],p+[0,.10 if stage==0 else .20,.06],p+[0,.10 if stage==0 else .20,0]]
+    elif kind=='transfer':points=[p,p+[0,0,.06],p+[0,(-1 if p[1]>0 else 1)*(.10 if stage==0 else .20),.06],p+[0,(-1 if p[1]>0 else 1)*(.10 if stage==0 else .20),0]]
     elif kind in ('wrist','stow'):points=[p]
     else:points=[p+[.035*np.sin(t),.035*(1-np.cos(t)),0] for t in np.linspace(0,np.pi/2,5)]
     if any(not (.3<=v[0]<=.75 and abs(v[1])<=.35 and -.20<=v[2]<=.45) for v in points):continue
