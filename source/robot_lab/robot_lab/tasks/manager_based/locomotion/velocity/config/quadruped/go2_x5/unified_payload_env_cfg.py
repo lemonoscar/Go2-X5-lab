@@ -83,7 +83,7 @@ class UnifiedTaskArmEnvCfg(UnifiedTerrainFocusEnvCfg):
     startup_hold_seconds: float = 1.0
     def __post_init__(self):
         super().__post_init__()
-        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.task_arm import TaskArmCommandCfg, task_payload, task_clearance_violation, spawn_task_robot
+        from robot_lab.tasks.manager_based.locomotion.velocity.mdp.task_arm import TaskArmCommandCfg, task_payload, task_clearance_violation, spawn_task_robot, standing_roll_centering
         self.commands.arm_joint_pos=TaskArmCommandCfg(debug_vis=False)
         self.scene.robot.spawn.articulation_props.enabled_self_collisions=True
         self.scene.robot.spawn.func=spawn_task_robot
@@ -104,6 +104,8 @@ class UnifiedTaskArmEnvCfg(UnifiedTerrainFocusEnvCfg):
                 a.velocity_limit=a.velocity_limit_sim=3.
                 a.stiffness=250. if proximal else 80.
                 a.damping=8. if proximal else 3.
+        from isaaclab.managers import RewardTermCfg
+        self.rewards.standing_roll_centering=RewardTermCfg(func=standing_roll_centering,weight=-1.)
         self.rewards.standing_position.weight=-2.
         self.rewards.standing_velocity.weight=-1.
         self.rewards.standing_posture.weight=-1.

@@ -150,3 +150,10 @@ def spawn_task_robot(prim_path,cfg,translation=None,orientation=None,**kwargs):
     finger=stage.GetPrimAtPath(prim_path+'/arm_link7')
     UsdPhysics.FilteredPairsAPI.Apply(finger).CreateFilteredPairsRel().AddTarget(prim_path+'/arm_link8')
     return prim
+
+
+def standing_roll_centering(env):
+    """Keep margin below the 5-degree roll goal while permitting fore/aft pitch."""
+    base=env.command_manager.get_term('base_velocity')
+    standing=(base.command==0).all(-1)
+    return (env.scene['robot'].data.projected_gravity_b[:,1]/0.08715574275).square()*standing
